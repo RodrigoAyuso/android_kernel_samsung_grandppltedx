@@ -57,8 +57,13 @@ Required properties:
  - ep childnode: To specify the number of endpoints and their properties.
 
 Optional properties:
+<<<<<<< HEAD
  - atmel,vbus-gpio: If present, specifies a gpio that allows to detect whether
    vbus is present (USB is connected).
+=======
+ - atmel,vbus-gpio: If present, specifies a gpio that needs to be
+   activated for the bus to be powered.
+>>>>>>> 4a3ae9324eb (USB: gadget: atmel_usba: add DT support)
 
 Required child node properties:
  - name: Name of the endpoint.
