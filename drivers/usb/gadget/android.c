@@ -1056,7 +1056,7 @@ static struct android_usb_function ptp_function = {
 #ifdef CONFIG_USB_ANDROID_SAMSUNG_COMPOSITE
 	.ctrlrequest	= mtp_function_ctrlrequest,
 #else
-	.ctrlrequest	= ptp_function_ctrlrequest,
+	.ctrlrequest	= ptp_function_ctrlrequest, //ALPS01832160
 #endif
 };
 

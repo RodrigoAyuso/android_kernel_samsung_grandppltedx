@@ -75,6 +75,8 @@ struct eth_dev {
 
 	struct sk_buff_head	rx_frames;
 
+	unsigned		qmult;
+
 	unsigned		header_len;
 	unsigned int		ul_max_pkts_per_xfer;
 	unsigned int		dl_max_pkts_per_xfer;
@@ -101,16 +103,12 @@ struct eth_dev {
 
 #define DEFAULT_QLEN	2	/* double buffering by default */
 
-static unsigned qmult = 10;
-module_param(qmult, uint, S_IRUGO|S_IWUSR);
-MODULE_PARM_DESC(qmult, "queue length multiplier at high/super speed");
-
 static unsigned tx_wakeup_threshold = 13;
 module_param(tx_wakeup_threshold, uint, S_IRUGO|S_IWUSR);
 MODULE_PARM_DESC(tx_wakeup_threshold, "tx wakeup threshold value");
 
 /* for dual-speed hardware, use deeper queues at high/super speed */
-static inline int qlen(struct usb_gadget *gadget)
+static inline int qlen(struct usb_gadget *gadget, unsigned qmult)
 {
 	if (gadget_is_dualspeed(gadget) && (gadget->speed == USB_SPEED_HIGH ||
 					    gadget->speed == USB_SPEED_SUPER))
@@ -446,7 +444,7 @@ static void rx_fill(struct eth_dev *dev, gfp_t gfp_flags)
 	spin_lock_irqsave(&dev->reqrx_lock, flags);
 	while (!list_empty(&dev->rx_reqs)) {
 		/* break the nexus of continuous completion and re-submission*/
-		if (++req_cnt > qlen(dev->gadget))
+		if (++req_cnt > qlen(dev->gadget, dev->qmult))
 			break;
 
 		req = container_of(dev->rx_reqs.next,
@@ -872,7 +870,7 @@ static netdev_tx_t eth_start_xmit(struct sk_buff *skb,
 			 (dev->gadget->speed == USB_SPEED_HIGH ||
 			  dev->gadget->speed == USB_SPEED_SUPER)) {
 		dev->tx_qlen++;
-		if (dev->tx_qlen == (qmult/2)) {
+		if (dev->tx_qlen == (dev->qmult/2)) {
 			req->no_interrupt = 0;
 			dev->tx_qlen = 0;
 		} else {
@@ -993,16 +991,6 @@ static int eth_stop(struct net_device *net)
 
 /*-------------------------------------------------------------------------*/
 
-/* initial value, changed by "ifconfig usb0 hw ether xx:xx:xx:xx:xx:xx" */
-static char *dev_addr;
-module_param(dev_addr, charp, S_IRUGO);
-MODULE_PARM_DESC(dev_addr, "Device Ethernet Address");
-
-/* this address is invisible to ifconfig */
-static char *host_addr;
-module_param(host_addr, charp, S_IRUGO);
-MODULE_PARM_DESC(host_addr, "Host Ethernet Address");
-
 static int get_ether_addr(const char *str, u8 *dev_addr)
 {
 	if (str) {
@@ -1051,8 +1039,9 @@ static struct device_type gadget_type = {
  *
  * Returns negative errno, or zero on success
  */
-struct eth_dev *gether_setup_name(struct usb_gadget *g, u8 ethaddr[ETH_ALEN],
-		const char *netname)
+struct eth_dev *gether_setup_name(struct usb_gadget *g,
+		const char *dev_addr, const char *host_addr,
+		u8 ethaddr[ETH_ALEN], unsigned qmult, const char *netname)
 {
 	struct eth_dev		*dev;
 	struct net_device	*net;
@@ -1076,6 +1065,7 @@ struct eth_dev *gether_setup_name(struct usb_gadget *g, u8 ethaddr[ETH_ALEN],
 
 	/* network device setup */
 	dev->net = net;
+	dev->qmult = qmult;
 	snprintf(net->name, sizeof(net->name), "%s%%d", netname);
 
 	if (get_ether_addr(dev_addr, net->dev_addr))
@@ -1114,6 +1104,7 @@ struct eth_dev *gether_setup_name(struct usb_gadget *g, u8 ethaddr[ETH_ALEN],
 
 	return dev;
 }
+EXPORT_SYMBOL(gether_setup_name);
 
 void gether_update_dl_max_xfer_size(struct gether *link, uint32_t s)
 {
@@ -1140,6 +1131,7 @@ void gether_cleanup(struct eth_dev *dev)
 	flush_work(&dev->work);
 	free_netdev(dev->net);
 }
+EXPORT_SYMBOL(gether_cleanup);
 
 /**
  * gether_connect - notify network layer that USB link is active
@@ -1190,11 +1182,12 @@ struct net_device *gether_connect(struct gether *link)
 	}
 
 	if (result == 0)
-		result = alloc_requests(dev, link, qlen(dev->gadget));
+		result = alloc_requests(dev, link, qlen(dev->gadget,
+					dev->qmult));
 
 	if (result == 0) {
 		dev->zlp = link->is_zlp_ok;
-		DBG(dev, "qlen %d\n", qlen(dev->gadget));
+		DBG(dev, "qlen %d\n", qlen(dev->gadget, dev->qmult));
 
 		dev->header_len = link->header_len;
 		dev->unwrap = link->unwrap;
@@ -1238,6 +1231,7 @@ fail:
 
 	return dev->net;
 }
+EXPORT_SYMBOL(gether_connect);
 
 /**
  * gether_disconnect - notify network layer that USB link is inactive
@@ -1322,6 +1316,7 @@ void gether_disconnect(struct gether *link)
 	dev->port_usb = NULL;
 	spin_unlock(&dev->lock);
 }
+EXPORT_SYMBOL(gether_disconnect);
 
 static int __init gether_init(void)
 {
@@ -1346,5 +1341,6 @@ static void __exit gether_exit(void)
 	destroy_workqueue(uether_wq1);
 }
 module_exit(gether_exit);
+MODULE_AUTHOR("David Brownell");
 MODULE_DESCRIPTION("ethernet over USB driver");
 MODULE_LICENSE("GPL v2");
