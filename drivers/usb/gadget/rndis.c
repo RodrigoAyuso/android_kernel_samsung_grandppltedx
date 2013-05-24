@@ -795,6 +795,7 @@ int rndis_signal_connect(int configNr)
 	return rndis_indicate_status_msg(configNr,
 					  RNDIS_STATUS_MEDIA_CONNECT);
 }
+EXPORT_SYMBOL(rndis_signal_connect);
 
 int rndis_signal_disconnect(int configNr)
 {
@@ -803,6 +804,7 @@ int rndis_signal_disconnect(int configNr)
 	return rndis_indicate_status_msg(configNr,
 					  RNDIS_STATUS_MEDIA_DISCONNECT);
 }
+EXPORT_SYMBOL(rndis_signal_disconnect);
 
 void rndis_uninit(int configNr)
 {
@@ -817,11 +819,13 @@ void rndis_uninit(int configNr)
 	while ((buf = rndis_get_next_response(configNr, &length)))
 		rndis_free_response(configNr, buf);
 }
+EXPORT_SYMBOL(rndis_uninit);
 
 void rndis_set_host_mac(int configNr, const u8 *addr)
 {
 	rndis_per_dev_params[configNr].host_mac = addr;
 }
+EXPORT_SYMBOL(rndis_set_host_mac);
 
 /*
  * Message Parser
@@ -925,6 +929,7 @@ int rndis_msg_parser(u8 configNr, u8 *buf)
 
 	return -ENOTSUPP;
 }
+EXPORT_SYMBOL(rndis_msg_parser);
 
 int rndis_register(void (*resp_avail)(void *v), void *v)
 {
@@ -947,6 +952,7 @@ int rndis_register(void (*resp_avail)(void *v), void *v)
 
 	return -ENODEV;
 }
+EXPORT_SYMBOL(rndis_register);
 
 void rndis_deregister(int configNr)
 {
@@ -955,6 +961,7 @@ void rndis_deregister(int configNr)
 	if (configNr >= RNDIS_MAX_CONFIGS) return;
 	rndis_per_dev_params[configNr].used = 0;
 }
+EXPORT_SYMBOL(rndis_deregister);
 
 int rndis_set_param_dev(u8 configNr, struct net_device *dev, u16 *cdc_filter)
 {
@@ -972,6 +979,7 @@ int rndis_set_param_dev(u8 configNr, struct net_device *dev, u16 *cdc_filter)
 
 	return 0;
 }
+EXPORT_SYMBOL(rndis_set_param_dev);
 
 int rndis_set_param_vendor(u8 configNr, u32 vendorID, const char *vendorDescr)
 {
@@ -984,6 +992,7 @@ int rndis_set_param_vendor(u8 configNr, u32 vendorID, const char *vendorDescr)
 
 	return 0;
 }
+EXPORT_SYMBOL(rndis_set_param_vendor);
 
 int rndis_set_param_medium(u8 configNr, u32 medium, u32 speed)
 {
@@ -995,6 +1004,7 @@ int rndis_set_param_medium(u8 configNr, u32 medium, u32 speed)
 
 	return 0;
 }
+EXPORT_SYMBOL(rndis_set_param_medium);
 
 void rndis_set_max_pkt_xfer(u8 configNr, u8 max_pkt_per_xfer)
 {
@@ -1016,6 +1026,7 @@ void rndis_add_hdr(struct sk_buff *skb)
 	header->DataOffset = cpu_to_le32(36);
 	header->DataLength = cpu_to_le32(skb->len - sizeof(*header));
 }
+EXPORT_SYMBOL(rndis_add_hdr);
 
 void rndis_free_response(int configNr, u8 *buf)
 {
@@ -1035,6 +1046,7 @@ void rndis_free_response(int configNr, u8 *buf)
 		}
 	}
 }
+EXPORT_SYMBOL(rndis_free_response);
 
 u8 *rndis_get_next_response(int configNr, u32 *length)
 {
@@ -1056,6 +1068,7 @@ u8 *rndis_get_next_response(int configNr, u32 *length)
 
 	return NULL;
 }
+EXPORT_SYMBOL(rndis_get_next_response);
 
 static rndis_resp_t *rndis_add_response(int configNr, u32 length)
 {
@@ -1146,6 +1159,7 @@ int rndis_rm_hdr(struct gether *port,
 
 	return 0;
 }
+EXPORT_SYMBOL(rndis_rm_hdr);
 
 #ifdef CONFIG_USB_GADGET_DEBUG_FILES
 
@@ -1290,6 +1304,7 @@ int rndis_init(void)
 	rndis_initialized = true;
 	return 0;
 }
+EXPORT_SYMBOL(rndis_init);
 
 void rndis_exit(void)
 {
@@ -1309,3 +1324,6 @@ void rndis_exit(void)
 	}
 #endif
 }
+EXPORT_SYMBOL(rndis_exit);
+
+MODULE_LICENSE("GPL");
