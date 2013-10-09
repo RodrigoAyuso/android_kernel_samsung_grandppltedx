@@ -128,10 +128,6 @@ void fsg_common_get(struct fsg_common *common);
 
 void fsg_common_put(struct fsg_common *common);
 
-struct fsg_common *fsg_common_init(struct fsg_common *common,
-				   struct usb_composite_dev *cdev,
-				   struct fsg_config *cfg);
-
 void fsg_common_set_sysfs(struct fsg_common *common, bool sysfs);
 
 int fsg_common_set_num_buffers(struct fsg_common *common, unsigned int n);
@@ -172,22 +168,5 @@ ssize_t fsg_inquiry_show(struct fsg_common *common, char *buf);
 ssize_t fsg_inquiry_store(struct fsg_common *common, const char *buf, size_t size);
 ssize_t fsg_bicr_show(struct fsg_common *common, char *buf);
 ssize_t fsg_bicr_store(struct fsg_common *common, const char *buf, size_t size);
-
-static inline struct fsg_common *
-fsg_common_from_params(struct fsg_common *common,
-		       struct usb_composite_dev *cdev,
-		       const struct fsg_module_parameters *params,
-		       unsigned int fsg_num_buffers)
-	__attribute__((unused));
-static inline struct fsg_common *
-fsg_common_from_params(struct fsg_common *common,
-		       struct usb_composite_dev *cdev,
-		       const struct fsg_module_parameters *params,
-		       unsigned int fsg_num_buffers)
-{
-	struct fsg_config cfg;
-	fsg_config_from_params(&cfg, params, fsg_num_buffers);
-	return fsg_common_init(common, cdev, &cfg);
-}
 
 #endif /* USB_F_MASS_STORAGE_H */
