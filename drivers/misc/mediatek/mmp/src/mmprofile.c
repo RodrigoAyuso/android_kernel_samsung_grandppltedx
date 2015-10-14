@@ -46,10 +46,6 @@
 #define MMPROFILE_INTERNAL
 #include <mmprofile_internal.h>
 
-#ifdef CONFIG_MTK_EXTMEM
-#include <linux/exm_driver.h>
-#endif
-
 /* #pragma GCC optimize ("O0") */
 #define MMP_DEVNAME "mmp"
 
@@ -306,12 +302,7 @@ static void MMProfileInitBuffer(void)
 		}
 		if (bResetRingBuffer) {
 			pMMProfileRingBuffer =
-#ifdef CONFIG_MTK_EXTMEM
-			    (MMProfile_Event_t *)
-			    extmem_malloc_page_align(MMProfileGlobals.buffer_size_bytes);
-#else
 			    vmalloc(MMProfileGlobals.buffer_size_bytes);
-#endif
 		}
 		MMP_LOG(ANDROID_LOG_DEBUG, "pMMProfileRingBuffer=0x%08lx",
 			(unsigned long)pMMProfileRingBuffer);
@@ -327,12 +318,7 @@ static void MMProfileInitBuffer(void)
 		}
 		if (bResetMetaBuffer) {
 			pMMProfileMetaBuffer =
-#ifdef CONFIG_MTK_EXTMEM
-			    (unsigned char *)
-			    extmem_malloc_page_align(MMProfileGlobals.meta_buffer_size);
-#else
 			    vmalloc(MMProfileGlobals.meta_buffer_size);
-#endif
 		}
 		MMP_LOG(ANDROID_LOG_DEBUG, "pMMProfileMetaBuffer=0x%08lx",
 			(unsigned long)pMMProfileMetaBuffer);
