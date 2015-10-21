@@ -16,7 +16,6 @@
 
 #ifdef CONFIG_OF_RESERVED_MEM
 #include <linux/of_reserved_mem.h>
-#include <mt-plat/mtk_memcfg.h>
 #endif
 
 #ifdef CONFIG_OF
@@ -144,22 +143,14 @@ void c2k_platform_restore_first_init(void)
 
 int modem_sdio_reserve_mem_of_init(struct reserved_mem *rmem)
 {
-	phys_addr_t rptr = 0;
 	unsigned int rsize = 0;
 
-	rptr = rmem->base;
 	rsize = (unsigned int)rmem->size;
-	MTK_MEMCFG_LOG_AND_PRINTK("%s,uname:%s,base:0x%llx,size:0x%x\n",
-				  __func__, rmem->name,
-				  (unsigned long long)rptr, rsize);
 
 	if (strstr(CCCI_MD3_MEM_RESERVED_KEY, rmem->name)) {
-		if (rsize < MD3_MEM_RAM_ROM) {
-			MTK_MEMCFG_LOG_AND_PRINTK("%s: reserve size=0x%x != 0x%x\n",
-						  __func__, rsize,
-						  MD3_MEM_RESERVED_SIZE);
+		if (rsize < MD3_MEM_RAM_ROM)
 			return 0;
-		}
+
 		md3_share_mem_size = rsize - MD3_MEM_RAM_ROM;
 	}
 	md3_mem_base = rmem->base;

@@ -11,7 +11,6 @@
 # GNU General Public License for more details.
 #
 
-obj-$(CONFIG_MTK_MEMCFG) += mtk_memcfg.o
 ifneq ($(CONFIG_ARM64), y)
 # For arm32
 obj-$(CONFIG_MT_ENG_BUILD) += mtk_common_hooks.o

@@ -65,7 +65,6 @@
 #define DRAM_R1_DUMMY_READ_RESERVED_KEY "reserve-memory-dram_r1_dummy_read"
 #define DRAM_RSV_SIZE 0x1000
 #include <linux/of_reserved_mem.h>
-#include <mt-plat/mtk_memcfg.h>
 #endif
 
 static void __iomem *CQDMA_BASE_ADDR;
