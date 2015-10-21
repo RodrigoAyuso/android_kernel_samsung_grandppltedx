@@ -43,7 +43,6 @@
 #include <mt-plat/mt_boot_common.h>
 #include <mt-plat/mt_ccci_common.h>
 
-#include <mt-plat/mtk_memcfg.h>
 #include "ccci_util_log.h"
 #include "ccci_util_lib_main.h"
 /**************************************************************************
@@ -487,10 +486,6 @@ static void share_memory_info_parsing(void)
 		s_g_md_env_rdy_flag = 0; /* Reset to zero if get share memory info fail */
 		return;
 	}
-	MTK_MEMCFG_LOG_AND_PRINTK("[PHY layout]ccci_share_mem at LK  :  0x%llx - 0x%llx  (0x%llx)\n",
-				smem_layout.base_addr,
-				smem_layout.base_addr + (unsigned long long)smem_layout.total_smem_size - 1LL,
-				(unsigned long long)smem_layout.total_smem_size);
 
 	/* MD*_SMEM_SIZE */
 	md_resv_smem_size[MD_SYS1] = smem_layout.ap_md1_smem_size;
@@ -550,12 +545,6 @@ static void md_mem_info_parsing(void)
 		CCCI_UTIL_INF_MSG("=============================\n");
 		#endif
 		md_id = (int)curr->md_id;
-		if (curr->size) {
-			MTK_MEMCFG_LOG_AND_PRINTK("[PHY layout]ccci_md%d at LK  :  0x%llx - 0x%llx  (0x%llx)\n",
-				md_id, curr->base_addr,
-				curr->base_addr + (unsigned long long)curr->size - 1LL,
-				(unsigned long long)curr->size);
-		}
 
 		if ((md_id < MAX_MD_NUM_AT_LK) && (md_resv_mem_size[md_id] == 0)) {
 			md_resv_mem_size[md_id] = curr->size;
@@ -1227,7 +1216,7 @@ void ccci_md_mem_reserve(void)
 #define CCCI_MD2_MEM_RESERVED_KEY "mediatek,reserve-memory-ccci_md2"
 #define CCCI_MD3_MEM_RESERVED_KEY "mediatek,reserve-memory-ccci_md3_ccif"
 #define CCCI_MD1MD3_SMEM_RESERVED_KEY "mediatek,reserve-memory-ccci_share"
-#include <mt-plat/mtk_memcfg.h>
+
 int ccci_reserve_mem_of_init(struct reserved_mem *rmem)
 {
 	phys_addr_t rptr = 0;
