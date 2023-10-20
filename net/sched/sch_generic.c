@@ -168,21 +168,6 @@ int sch_direct_xmit(struct sk_buff *skb, struct Qdisc *q,
 
 		HARD_TX_UNLOCK(dev, txq);
 	}
-
-	#ifdef CONFIG_MTK_NET_LOGGING
-	if (ret != NETDEV_TX_OK) {
-		if (qdisc_qlen(q) < 16) {
-			if (4 == (qdisc_qlen(q)) % 16)
-				pr_debug("[mtk_net][sched]dev_hard_start_xmit ret = %d(%s), txq state = %lu\n",
-					 ret, dev->name, txq->state);
-		} else {
-				if (64 == (qdisc_qlen(q)) % 128)
-					pr_debug("[mtk_net][sched]warning: dev_hard_start_xmit ret = %d(%s), txq state = %lu\n",
-						 ret, dev->name, txq->state);
-		}
-	}
-	#endif
-
 	spin_lock(root_lock);
 
 	if (dev_xmit_complete(ret)) {
