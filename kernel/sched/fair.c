@@ -5545,19 +5545,6 @@ static int mt_select_task_rq_fair(struct task_struct *p, int prev_cpu)
 #endif
 }
 
-#ifdef CONFIG_MTK_SCHED_TRACERS
-#define LB_RESET		0
-#define LB_AFFINITY		0x10
-#define LB_BUDDY		0x20
-#define LB_FORK			0x30
-#define LB_CMP_SHIFT	8
-#define LB_CMP			0x4000
-#define LB_SMP_SHIFT	16
-#define LB_SMP			0x500000
-#define LB_HMP_SHIFT	24
-#define LB_HMP			0x60000000
-#endif
-
 /*
  * select_task_rq_fair: Select target runqueue for the waking task in domains
  * that have the 'sd_flag' flag set. In practice, this is SD_BALANCE_WAKE,
@@ -5579,15 +5566,9 @@ select_task_rq_fair(struct task_struct *p, int prev_cpu, int sd_flag, int wake_f
 	int want_affine = 0;
 	int sync = wake_flags & WF_SYNC;
 	int prefer_cpu;
-#ifdef CONFIG_MTK_SCHED_TRACERS
-	int policy = 0;
-#endif
-	if (p->nr_cpus_allowed == 1) {
-#ifdef CONFIG_MTK_SCHED_TRACERS
-		trace_sched_select_task_rq(p, (LB_AFFINITY | prev_cpu), prev_cpu, prev_cpu);
-#endif
+
+	if (p->nr_cpus_allowed == 1)
 		return prev_cpu;
-	}
 
 #ifdef CONFIG_HMP_PACK_SMALL_TASK
 	if (check_pack_buddy(cpu, p))
@@ -5604,25 +5585,16 @@ select_task_rq_fair(struct task_struct *p, int prev_cpu, int sd_flag, int wake_f
 			__always_unused int lowest_ratio = hmp_domain_min_load(hmpdom, &new_cpu);
 
 			if (new_cpu < nr_cpu_ids && cpumask_test_cpu(new_cpu, tsk_cpus_allowed(p))) {
-#ifdef CONFIG_MTK_SCHED_TRACERS
-				trace_sched_select_task_rq(p, (LB_FORK | new_cpu), prev_cpu, new_cpu);
-#endif
 				return new_cpu;
 			}
 			new_cpu = cpumask_any_and(&hmp_faster_domain(cpu)->cpus,
 						  tsk_cpus_allowed(p));
 			if (new_cpu < nr_cpu_ids) {
-#ifdef CONFIG_MTK_SCHED_TRACERS
-				trace_sched_select_task_rq(p, (LB_FORK | new_cpu), prev_cpu, new_cpu);
-#endif
 				return new_cpu;
 			}
 		} else {
 			new_cpu = hmp_select_faster_cpu(p, prev_cpu);
 			if (new_cpu < nr_cpu_ids) {
-#ifdef CONFIG_MTK_SCHED_TRACERS
-				trace_sched_select_task_rq(p, (LB_FORK | new_cpu), prev_cpu, new_cpu);
-#endif
 				return new_cpu;
 			}
 		}
@@ -5639,10 +5611,6 @@ select_task_rq_fair(struct task_struct *p, int prev_cpu, int sd_flag, int wake_f
 	if (prefer_cpu < nr_cpu_ids) {
 		cpu = prefer_cpu;
 		new_cpu = prefer_cpu;
-#ifdef CONFIG_MTK_SCHED_TRACERS
-		policy |= (new_cpu << LB_CMP_SHIFT);
-		policy |= LB_CMP;
-#endif
 		mt_sched_printf(sched_log, "cmp/interop wakeup %d %s to cpu %d",
 				p->pid, p->comm, cpu);
 		goto mt_found;
@@ -5726,26 +5694,14 @@ select_task_rq_fair(struct task_struct *p, int prev_cpu, int sd_flag, int wake_f
 		/* while loop will break here if sd == NULL */
 	}
 
-#ifdef CONFIG_MTK_SCHED_TRACERS
-	policy |= (new_cpu << LB_SMP_SHIFT);
-	policy |= LB_SMP;
-#endif
-
 unlock:
 	rcu_read_unlock();
 	mt_sched_printf(sched_log, "wakeup %d %s new_cpu=%x", p->pid, p->comm, new_cpu);
 
 mt_found:
-	if (sched_feat(SCHED_HMP)) {
+	if (sched_feat(SCHED_HMP))
 		new_cpu = hmp_select_task_rq_fair(sd_flag, p, prev_cpu, new_cpu);
-#ifdef CONFIG_MTK_SCHED_TRACERS
-		policy |= (new_cpu << LB_HMP_SHIFT);
-		policy |= LB_HMP;
-#endif
-	}
-#ifdef CONFIG_MTK_SCHED_TRACERS
-	trace_sched_select_task_rq(p, policy, prev_cpu, new_cpu);
-#endif
+
 	return new_cpu;
 }
 /*

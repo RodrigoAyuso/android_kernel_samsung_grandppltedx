@@ -30,7 +30,6 @@
 #include <linux/suspend.h>
 #include <linux/reboot.h>
 #include <linux/cpu.h>
-#include <mtk_ftrace.h>
 #if !defined(CONFIG_CPU_FREQ_DEFAULT_GOV_HOTPLUG) && !defined(CONFIG_CPU_FREQ_DEFAULT_GOV_BALANCE)
 #include <mt_hotplug_strategy.h>
 #endif
@@ -137,29 +136,13 @@ static void hib_hotplug_mode(int en)
 	}
 }
 
-static void hib_ftrace_buffer(int en)
-{
-#if defined(CONFIG_MTK_SCHED_TRACERS)
-	int fterr = 0;
-
-	hib_warn("%s ftrace mode\n", (en ? "enable" : "disable"));
-	fterr = resize_ring_buffer_for_hibernation(en);
-	if (fterr < 0)
-		hib_warn("calling resize_ring_buffer_for_hibernation() failed (%d)\n", fterr);
-#endif
-}
-
 static void hibernate_recover(void)
 {
-	hib_ftrace_buffer(1);
-
 	hib_hotplug_mode(1);
 }
 
 static void hibernate_restore(void)
 {
-	hib_ftrace_buffer(1);
-
 	hib_hotplug_mode(1);
 
 	hib_warn("start trigger ipod\n");
@@ -291,12 +274,9 @@ int pre_hibernate(void)
 {
 	int err = 0;
 
-	hib_ftrace_buffer(0);
-
 	/* check free memory status. */
 	if (bad_memory_status()) {
 		err = -1;
-		hib_ftrace_buffer(1);
 		goto ERR;
 	}
 

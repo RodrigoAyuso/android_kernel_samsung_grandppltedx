@@ -4,9 +4,6 @@
  */
 
 #include "sched.h"
-#if defined(CONFIG_MT_SCHED_TRACE)
-#include <trace/events/sched.h>
-#endif
 
 #include <linux/slab.h>
 #ifdef CONFIG_MTPROF
@@ -1534,18 +1531,6 @@ select_task_rq_rt(struct task_struct *p, int cpu, int sd_flag, int flags)
 	 * This test is optimistic, if we get it wrong the load-balancer
 	 * will have to sort it out.
 	 */
-#if defined(CONFIG_MT_SCHED_TRACE)
-	if (curr) {
-		mt_sched_printf(sched_rt_info,
-				"1 select_task_rq_rt cpu=%d p=%d:%s:prio=%d:0x%x curr=%d:%s:prio=%d:0x%x",
-				cpu, p->pid, p->comm, p->prio, p->nr_cpus_allowed, curr->pid,
-				curr->comm, curr->prio, curr->nr_cpus_allowed);
-	} else {
-		mt_sched_printf(sched_rt_info, "1 select_task_rq_rt cpu=%d p=%d:%s:prio=%d:0x%x",
-				cpu, p->pid, p->comm, p->prio, p->nr_cpus_allowed);
-	}
-#endif
-
 #if defined(CONFIG_MT_SCHED_INTEROP)
 	/* if the task is allowed to put more than one CPU. */
 	if ((p->nr_cpus_allowed > 1)) {

@@ -25,8 +25,6 @@
 
 #include "trace_output.h"
 
-#include "mtk_ftrace.h"
-
 #undef TRACE_SYSTEM
 #define TRACE_SYSTEM "TRACE_SYSTEM"
 
