@@ -19,9 +19,6 @@
 #include <linux/list.h>
 #include <linux/init.h>
 #include <linux/smp.h>
-#ifdef CONFIG_MT_SCHED_MONITOR
-#include "mt_sched_mon.h"
-#endif
 #include <linux/io.h>
 #include <linux/delay.h>
 #include <linux/hardirq.h>
@@ -105,9 +102,6 @@ void aee_wdt_dump_info(void)
 	aee_rr_rec_fiq_step(AEE_FIQ_STEP_KE_WDT_INFO);
 	if (wdt_log_length == 0) {
 		LOGE("\n No log for WDT\n");
-#ifdef CONFIG_MT_SCHED_MONITOR
-		mt_dump_sched_traces();
-#endif
 		return;
 	}
 
@@ -457,10 +451,6 @@ void aee_wdt_atf_info(unsigned int cpu, struct pt_regs *regs)
 	nanosec_rem = do_div(t, 1000000000);
 	aee_wdt_printf("\nQwdt at [%5lu.%06lu]\n", (unsigned long)t, nanosec_rem / 1000);
 
-#ifdef CONFIG_MT_SCHED_MONITOR
-	aee_rr_rec_fiq_step(AEE_FIQ_STEP_WDT_IRQ_SCHED);
-	mt_aee_dump_sched_traces();
-#endif
 	aee_sram_fiq_log(wdt_log_buf);
 
 	/* avoid lock prove to dump_stack in __debug_locks_off() */

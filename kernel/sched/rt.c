@@ -6,9 +6,7 @@
 #include "sched.h"
 
 #include <linux/slab.h>
-#ifdef CONFIG_MTPROF
-#include "mt_sched_mon.h"
-#endif
+
 int sched_rr_timeslice = RR_TIMESLICE;
 
 static int do_sched_rt_period_timer(struct rt_bandwidth *rt_b, int overrun);
@@ -29,11 +27,6 @@ static enum hrtimer_restart sched_rt_period_timer(struct hrtimer *timer)
 
 		if (!overrun)
 			break;
-#ifdef CONFIG_MTPROF
-		/* mt throttle monitor */
-		mt_rt_mon_switch(MON_RESET);
-		mt_rt_mon_switch(MON_START);
-#endif
 
 		idle = do_sched_rt_period_timer(rt_b, overrun);
 	}
@@ -1079,11 +1072,6 @@ static int sched_rt_runtime_exceeded(struct rt_rq *rt_rq)
 			mt_sched_printf(sched_rt_info, "cpu=%d rt_throttled=%d",
 					cpu, rt_rq->rt_throttled);
 			per_cpu(rt_throttling_start, cpu) = rq_clock_task(rt_rq->rq);
-#endif
-#ifdef CONFIG_MTPROF
-			/* sched:rt throttle monitor */
-			mt_rt_mon_switch(MON_STOP);
-			mt_rt_mon_print_task();
 #endif
 		} else {
 			/*

@@ -86,9 +86,7 @@
 #include "sched.h"
 #include "../workqueue_internal.h"
 #include "../smpboot.h"
-#ifdef CONFIG_MTPROF
-#include "mt_sched_mon.h"
-#endif
+
 #define CREATE_TRACE_POINTS
 #include <trace/events/sched.h>
 #include <linux/sec_debug.h>
@@ -1070,12 +1068,6 @@ static inline void check_class_changed(struct rq *rq, struct task_struct *p,
 		if (prev_class->switched_from)
 			prev_class->switched_from(rq, p);
 		p->sched_class->switched_to(rq, p);
-#ifdef CONFIG_MT_SCHED_INTEROP
-		if (p->on_rq) {
-			mt_sched_printf(sched_interop, "priority pid=%d comm=%s cpu=%d prev_prio=%d next_prio=%d",
-				p->pid, p->comm, task_cpu(p), oldprio, p->prio);
-		}
-#endif
 	} else if (oldprio != p->prio || dl_task(p))
 		p->sched_class->prio_changed(rq, p, oldprio);
 }
@@ -1645,13 +1637,8 @@ void scheduler_ipi(void)
 	 */
 	preempt_fold_need_resched();
 
-	if (llist_empty(&this_rq()->wake_list) && !got_nohz_idle_kick()) {
-#ifdef CONFIG_MTPROF
-		mt_trace_ISR_start(IPI_RESCHEDULE);
-		mt_trace_ISR_end(IPI_RESCHEDULE);
-#endif
+	if (llist_empty(&this_rq()->wake_list) && !got_nohz_idle_kick())
 		return;
-	}
 
 	/*
 	 * Not all reschedule IPI handlers call irq_enter/irq_exit, since
@@ -1667,9 +1654,6 @@ void scheduler_ipi(void)
 	 * somewhat pessimize the simple resched case.
 	 */
 	irq_enter();
-#ifdef CONFIG_MTPROF
-	mt_trace_ISR_start(IPI_RESCHEDULE);
-#endif
 	sched_ttwu_pending();
 
 	/*
@@ -1679,9 +1663,6 @@ void scheduler_ipi(void)
 		this_rq()->idle_balance = 1;
 		raise_softirq_irqoff(SCHED_SOFTIRQ);
 	}
-#ifdef CONFIG_MTPROF
-	mt_trace_ISR_end(IPI_RESCHEDULE);
-#endif
 	irq_exit();
 }
 
@@ -2658,18 +2639,10 @@ void scheduler_tick(void)
 	update_rq_clock(rq);
 	curr->sched_class->task_tick(rq, curr, 0);
 	update_cpu_load_active(rq);
-#ifdef CONFIG_MT_SCHED_MONITOR
-	mt_trace_rqlock_start(&rq->lock);
-#endif
 	raw_spin_unlock(&rq->lock);
-#ifdef CONFIG_MT_SCHED_MONITOR
-	mt_trace_rqlock_end(&rq->lock);
-#endif
 
 	perf_event_task_tick();
-#ifdef CONFIG_MT_SCHED_MONITOR
-	mt_save_irq_counts(SCHED_TICK);
-#endif
+
 #ifdef CONFIG_SMP
 	rq->idle_balance = idle_cpu(cpu);
 	trigger_load_balance(rq);
@@ -2796,9 +2769,6 @@ void preempt_count_add(int val)
 		current->preempt_disable_ip = ip;
 #endif
 		trace_preempt_off(CALLER_ADDR0, ip);
-#ifdef CONFIG_MTPROF
-		MT_trace_preempt_off();
-#endif
 	}
 }
 EXPORT_SYMBOL(preempt_count_add);
@@ -2824,16 +2794,9 @@ void preempt_count_sub(int val)
 	preempt_dump_backtrace(SUB_PREEMPT);
 #endif
 
-	if (preempt_count() == val) {
+	if (preempt_count() == val)
 		trace_preempt_on(CALLER_ADDR0, get_parent_ip(CALLER_ADDR1));
-#ifdef CONFIG_MTPROF
-		MT_trace_preempt_on();
-#endif
-	}
 	__preempt_count_sub(val);
-#ifdef CONFIG_MTPROF
-	MT_trace_check_preempt_dur();
-#endif
 }
 EXPORT_SYMBOL(preempt_count_sub);
 NOKPROBE_SYMBOL(preempt_count_sub);
@@ -2986,9 +2949,6 @@ need_resched:
 
 	if (sched_feat(HRTICK))
 		hrtick_clear(rq);
-#if defined(CONFIG_MT_SCHED_MONITOR) && defined(CONFIG_MTPROF)
-	__raw_get_cpu_var(MT_trace_in_sched) = 1;
-#endif
 
 	/*
 	 * Make sure that signal_pending_state()->signal_pending() below
@@ -3047,9 +3007,6 @@ need_resched:
 	} else
 		raw_spin_unlock_irq(&rq->lock);
 
-#if defined(CONFIG_MT_SCHED_MONITOR) && defined(CONFIG_MTPROF)
-	__raw_get_cpu_var(MT_trace_in_sched) = 0;
-#endif
 	post_schedule(rq);
 
 	sched_preempt_enable_no_resched();
@@ -3875,9 +3832,6 @@ change:
 	task_rq_unlock(rq, p, &flags);
 
 	rt_mutex_adjust_pi(p);
-#ifdef CONFIG_MTPROF
-	check_mt_rt_mon_info(p);
-#endif
 
 	return 0;
 }
@@ -4354,11 +4308,6 @@ out_put_task:
 	put_online_cpus();
 	if (retval)
 		pr_debug("SCHED: setaffinity status %d\n", retval);
-#ifdef CONFIG_MT_SCHED_INTEROP
-	else
-		mt_sched_printf(sched_interop, "set affinity pid=%d comm=%s affinity=%ld",
-			p->pid, p->comm, p->cpus_allowed.bits[0]);
-#endif
 
 	return retval;
 }

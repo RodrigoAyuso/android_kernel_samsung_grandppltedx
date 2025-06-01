@@ -19,9 +19,6 @@
 #include <linux/list.h>
 #include <linux/init.h>
 #include <linux/smp.h>
-#ifdef CONFIG_MT_SCHED_MONITOR
-#include "mt_sched_mon.h"
-#endif
 #include <linux/io.h>
 #include <linux/delay.h>
 #include <linux/hardirq.h>
@@ -451,10 +448,6 @@ void aee_wdt_irq_info(void)
 	    dump_idle_info((wdt_log_buf + wdt_log_length), (sizeof(wdt_log_buf) - wdt_log_length));
 #endif
 
-#ifdef CONFIG_MT_SCHED_MONITOR
-	aee_rr_rec_fiq_step(AEE_FIQ_STEP_WDT_IRQ_SCHED);
-	mt_aee_dump_sched_traces();
-#endif
 	aee_sram_fiq_log(wdt_log_buf);
 
 	/* avoid lock prove to dump_stack in __debug_locks_off() */

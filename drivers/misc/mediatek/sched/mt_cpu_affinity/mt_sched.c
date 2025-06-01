@@ -90,10 +90,6 @@ static void mt_sched_check_tasks(void)
 
 static long __mt_sched_addaffinity(struct task_struct *p, const struct cpumask *new_mask)
 {
-
-#if MT_SCHED_AFFININTY_DEBUG
-	pr_debug("MT_SCHED: %s pid[%d]\n", __func__, p->pid);
-#endif
 	struct mt_task *new;
 	struct mt_task *tmp, *tmp2;
 	unsigned long irq_flags;
@@ -137,10 +133,6 @@ static long __mt_sched_setaffinity(pid_t pid, const struct cpumask *in_mask)
 	cpumask_var_t cpus_allowed, new_mask;
 	struct task_struct *p;
 	int retval;
-
-#if MT_SCHED_AFFININTY_DEBUG
-	pr_debug("MT_SCHED: %s pid[%d]\n", __func__, pid);
-#endif
 
 	rcu_read_lock();
 
@@ -256,10 +248,6 @@ static long __mt_sched_getaffinity(pid_t pid, struct cpumask *mask, struct cpuma
 
 	rcu_read_lock();
 
-#if MT_SCHED_AFFININTY_DEBUG
-	pr_debug("MT_SCHED: %s pid[%d]\n", __func__, pid);
-#endif
-
 	retval = -ESRCH;
 	p = find_process_by_pid(pid);
 	if (!p) {
@@ -307,10 +295,6 @@ static long __mt_sched_exitaffinity(pid_t pid)
 	if (0 == pid)
 		pid = current->pid;
 
-#if MT_SCHED_AFFININTY_DEBUG
-	pr_debug("MT_SCHED: %s pid[%d]\n", __func__, pid);
-#endif
-
 	spin_lock_irqsave(&mt_sched_spinlock, irq_flags);
 	list_for_each_entry_safe(tmp, tmp2, &mt_task_head.list, list) {
 		if (pid == tmp->pid) {
@@ -343,9 +327,6 @@ static long sched_ioctl_ioctl(struct file *filp, unsigned int cmd, unsigned long
 			retval = -EFAULT;
 			goto done;
 		}
-#if MT_SCHED_AFFININTY_DEBUG
-		pr_debug("MT_SCHED: %s [IOCTL_SETAFFINITY]\n", __func__);
-#endif
 
 		if (!alloc_cpumask_var(&new_mask, GFP_KERNEL))
 			return -ENOMEM;
@@ -363,9 +344,6 @@ static long sched_ioctl_ioctl(struct file *filp, unsigned int cmd, unsigned long
 			retval = -EFAULT;
 			goto done;
 		}
-#if MT_SCHED_AFFININTY_DEBUG
-		pr_debug("MT_SCHED: %s [IOCTL_GETAFFINITY]\n", __func__);
-#endif
 
 		len = data.len;
 
@@ -405,9 +383,6 @@ static long sched_ioctl_ioctl(struct file *filp, unsigned int cmd, unsigned long
 		break;
 
 	case IOCTL_EXITAFFINITY:
-#if MT_SCHED_AFFININTY_DEBUG
-		pr_debug("MT_SCHED: %s [IOCTL_EXITAFFINITY]\n", __func__);
-#endif
 		if (copy_from_user(&pid, (int __user *)arg, sizeof(pid))) {
 			retval = -EFAULT;
 			goto done;

@@ -23,6 +23,4 @@
 long sched_ioctl_compat(struct file *filp, unsigned int cmd, unsigned long arg);
 #endif
 
-#define MT_SCHED_AFFININTY_DEBUG 0
-
 #endif

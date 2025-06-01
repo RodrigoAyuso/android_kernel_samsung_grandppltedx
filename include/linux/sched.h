@@ -1195,15 +1195,6 @@ struct sched_statistics {
 };
 #endif
 
-#ifdef CONFIG_MTPROF_CPUTIME
-struct mtk_isr_info {
-	int     isr_num;
-	int	 isr_count;
-	u64   isr_time;
-	char *isr_name;
-	struct mtk_isr_info *next;
-};
-#endif
 struct sched_entity {
 	struct load_weight	load;		/* for load-balancing */
 	struct rb_node		run_node;
@@ -1233,13 +1224,6 @@ struct sched_entity {
 #ifdef CONFIG_SMP
 	/* Per-entity load-tracking */
 	struct sched_avg	avg;
-#endif
-#if defined(CONFIG_MTPROF_CPUTIME) || defined(CONFIG_MT_RT_THROTTLE_MON)
-	u64			mtk_isr_time;
-#endif
-#ifdef CONFIG_MTPROF_CPUTIME
-	int			mtk_isr_count;
-	struct mtk_isr_info  *mtk_isr;
 #endif
 };
 

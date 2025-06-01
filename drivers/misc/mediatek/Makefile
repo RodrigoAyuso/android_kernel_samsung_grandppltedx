@@ -38,7 +38,6 @@ obj-$(CONFIG_MTK_M4U)	+= m4u/
 obj-$(CONFIG_MTK_GPT_SCHEME_SUPPORT)	+= partition/
 obj-$(CONFIG_MTK_SYSENV)	+= sysenv/
 obj-$(CONFIG_MTK_PWM)	    += pwm/
-obj-$(CONFIG_MTPROF)	+= mtprof/
 ifeq ($(CONFIG_MTK_I2C_EXTENSION),y)
 obj-$(CONFIG_MTK_I2C)  += i2c/
 endif

@@ -91,9 +91,6 @@ long sched_ioctl_compat(struct file *filp, unsigned int cmd, unsigned long arg)
 		err = compat_get_sched_allocation_data(data32, data);
 		if (err)
 			return err;
-#if MT_SCHED_AFFININTY_DEBUG
-		pr_debug("MT_SCHED: %s [COMPAT_IOCTL_SETAFFINITY]\n", __func__);
-#endif
 		return filp->f_op->unlocked_ioctl(filp, IOCTL_SETAFFINITY, (unsigned long)data);
 	}
 	case COMPAT_IOCTL_GETAFFINITY:
@@ -110,18 +107,12 @@ long sched_ioctl_compat(struct file *filp, unsigned int cmd, unsigned long arg)
 		err = compat_get_sched_allocation_data(data32, data);
 		if (err)
 			return err;
-#if MT_SCHED_AFFININTY_DEBUG
-		pr_debug("MT_SCHED: %s [COMPAT_IOCTL_GETAFFINITY]\n", __func__);
-#endif
 		ret = filp->f_op->unlocked_ioctl(filp, IOCTL_GETAFFINITY, (unsigned long)data);
 
 		err = compat_put_sched_allocation_data(data32, data);
 		return ret ? ret : err;
 	}
 	case IOCTL_EXITAFFINITY:
-#if MT_SCHED_AFFININTY_DEBUG
-		pr_debug("MT_SCHED: %s [IOCTL_EXITAFFINITY]\n", __func__);
-#endif
 		return filp->f_op->unlocked_ioctl(filp, cmd, (unsigned long)compat_ptr(arg));
 	default:
 		return -ENOIOCTLCMD;
