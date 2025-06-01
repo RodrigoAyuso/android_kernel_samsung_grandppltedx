@@ -132,63 +132,6 @@ static inline void debug_spin_unlock(raw_spinlock_t *lock)
 #define WARNING_TIME 1000000000		/* warning time 1 seconds */
 static void __spin_lock_debug(raw_spinlock_t *lock)
 {
-#ifdef CONFIG_MTK_LOCK_DEBUG
-	u64 i;
-	u64 loops = loops_per_jiffy * LOOP_HZ;
-	int print_once = 1;
-	char aee_str[50];
-	unsigned long long t1, t2, t3;
-	struct task_struct *owner = NULL;
-
-	t1 = sched_clock();
-	t2 = t1;
-
-	for (;;) {
-		for (i = 0; i < loops; i++) {
-			if (arch_spin_trylock(&lock->raw_lock))
-				return;
-			__delay(1);
-		}
-		t3 = sched_clock();
-		if (t3 < t2)
-			continue;
-		else if (t3 - t2 < WARNING_TIME)
-			continue;
-		/* if(sched_clock() - t2 < WARNING_TIME) continue; */
-		t2 = sched_clock();
-
-		if (oops_in_progress != 0)
-			continue;  /* in exception follow, printk maybe spinlock error */
-
-		if (is_logbuf_lock(lock))	/*block by logbuf lock */
-			continue;
-		/* lockup suspected: */
-		if (lock->owner && lock->owner != SPINLOCK_OWNER_INIT)
-			owner = lock->owner;
-		pr_emerg("spin time: %llu ns(start:%llu ns, lpj:%lu, LPHZ:%d), value: 0x%08x\n",
-					sched_clock() - t1, t1, loops_per_jiffy, (int)LOOP_HZ,
-					*((unsigned int *)&lock->raw_lock));
-		pr_emerg("spinlock .owner: %s/%d, .owner_cpu: %d\n",
-			owner ? owner->comm : "<none>",
-			owner ? task_pid_nr(owner) : -1,
-			lock->owner_cpu);
-
-		if (print_once) {
-			print_once = 0;
-			spin_dump(lock, "lockup suspected");
-#ifdef CONFIG_SMP
-			trigger_all_cpu_backtrace();
-#endif
-			/* ensure debug_locks is true,then can call aee */
-			if (debug_locks) {
-				debug_show_all_locks();
-				snprintf(aee_str, 50, "Spinlock lockup:%s\n", current->comm);
-				aee_kernel_warning_api(__FILE__, __LINE__, DB_OPT_DUMMY_DUMP | DB_OPT_FTRACE,
-							aee_str, "spinlock debugger\n");
-			}
-		}
-	}
-#else /* CONFIG_MTK_LOCK_DEBUG*/
 	u64 i;
 	u64 loops = loops_per_jiffy * HZ;
 
@@ -212,7 +155,6 @@ static void __spin_lock_debug(raw_spinlock_t *lock)
 	 * progress.
 	 */
 	arch_spin_lock(&lock->raw_lock);
-#endif /* CONFIG_MTK_LOCK_DEBUG */
 }
 
 void do_raw_spin_lock(raw_spinlock_t *lock)

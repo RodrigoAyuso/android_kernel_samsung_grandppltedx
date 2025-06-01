@@ -39,11 +39,5 @@ extern bool is_hdmi_active(void);
 extern void hdmi_force_on(int from_uart_drv);
 #endif
 */
-#ifndef CONFIG_FIQ_DEBUGGER
-#ifdef CONFIG_MT_PRINTK_UART_CONSOLE
-extern bool printk_disable_uart;
-extern int mt_need_uart_console;
-#endif
-#endif
 
 #endif				/* #ifndef __MTK_UART_INTERNAL__ */

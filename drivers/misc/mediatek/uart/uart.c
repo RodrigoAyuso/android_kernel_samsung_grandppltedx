@@ -1672,16 +1672,6 @@ static irqreturn_t mtk_uart_irq(int irq, void *dev_id)
 	unsigned int intrs, timeout = 0;
 	struct mtk_uart *uart = (struct mtk_uart *)dev_id;
 
-#ifndef CONFIG_FIQ_DEBUGGER
-#ifdef CONFIG_MT_PRINTK_UART_CONSOLE
-	unsigned long base;
-
-	base = uart->base;
-	if ((uart == console_port) && (UART_READ32(UART_LSR) & 0x01))
-		printk_disable_uart = 0;
-#endif
-#endif
-
 	intrs = mtk_uart_get_interrupt(uart);
 
 #ifdef ENABLE_DEBUG
