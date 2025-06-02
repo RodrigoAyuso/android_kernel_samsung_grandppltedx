@@ -546,9 +546,7 @@ test_block_hash:
 				kunmap_atomic(page);
 #endif
 				v->hash_failed = 1;
-#if defined(CONFIG_TZ_ICCC)
-			printk(KERN_ERR "ICCC smc ret = %d \n",blowfish_smc_dmv_iccc(CUSTOM_SMC_FID, SUBFUN_DMV_WRITE, 1, 0));
-#endif
+
 				if (verity_handle_err(v, DM_VERITY_BLOCK_TYPE_DATA,
 					      io->block + b))
 
