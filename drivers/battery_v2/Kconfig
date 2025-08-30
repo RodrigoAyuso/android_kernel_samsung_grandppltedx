@@ -73,11 +73,14 @@ config UPDATE_BATTERY_DATA
 	 Say Y to include support for step charging
 
 config SAMSUNG_BATTERY_ENG_TEST
-	tristate "set test mode in eng build"
+	bool "enable ENG mode for battery test"
 	default n
 	depends on BATTERY_SAMSUNG
 	help
-	 Say Y to set test mode in eng build
+	  Say Y to include support for battery test
+	  enable this feature only ENG mode
+	  this featuren must disabled user binary
+	  stability test etc..
 
 # Fuel Gauge
 config FUELGAUGE_RT5033
@@ -617,15 +620,6 @@ config SAMSUNG_LPM_MODE
 	  This value defined at bootloader.
 	  Before enable this feature,
 	  implemet power off charging in the bootloader.
-
-config SAMSUNG_BATTERY_ENG_TEST
-	bool "enable ENG mode for battery test"
-	default n
-	help
-	  Say Y to include support for battery test
-	  enable this feature only ENG mode
-	  this featuren must disabled user binary
-	  stability test etc..
 
 config SAMSUNG_BATTERY_FACTORY
 	bool "enable for factory test"
