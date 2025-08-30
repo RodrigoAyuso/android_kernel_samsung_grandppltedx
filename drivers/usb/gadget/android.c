@@ -50,7 +50,7 @@
 #endif
 #include "f_mass_storage.c"
 #include "f_adb.c"
-#ifdef CONFIG_USB_ANDROID_SAMSUNG_MTP
+#ifdef CONFIG_USB_ANDROID_SAMSUNG_COMPOSITE
 #include "f_mtp_samsung.c"
 #else
 #include "f_mtp.c"
@@ -1097,7 +1097,7 @@ static int mtp_function_ctrlrequest(struct android_usb_function *f,
 					struct usb_composite_dev *cdev,
 					const struct usb_ctrlrequest *c)
 {
-#ifndef CONFIG_USB_ANDROID_SAMSUNG_MTP
+#ifndef CONFIG_USB_ANDROID_SAMSUNG_COMPOSITE
 	/* MTP MSFT OS Descriptor */
 	struct android_dev		*dev = _android_dev;
 	struct android_usb_function	*f_count;
