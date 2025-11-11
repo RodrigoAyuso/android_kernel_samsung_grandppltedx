@@ -15,9 +15,6 @@
 #include <linux/ftrace_event.h>
 #include "mtk_ftrace.h"
 #include "trace.h"
-#ifdef CONFIG_SEC_DEBUG
-#include <linux/sec_debug.h>
-#endif
 
 #ifdef CONFIG_MTK_KERNEL_MARKER
 static unsigned long __read_mostly tracing_mark_write_addr;
@@ -204,10 +201,7 @@ static void ftrace_events_enable(int enable)
 static __init int boot_ftrace(void)
 {
 	struct trace_array *tr;
-#ifdef CONFIG_SEC_DEBUG
-	if (sec_debug_level.en.kernel_fault == 0)
-		return 0;
-#endif
+
 	if (boot_trace) {
 		tr = top_trace_array();
 		tracing_update_buffers();
@@ -222,10 +216,6 @@ core_initcall(boot_ftrace);
 #ifdef CONFIG_MTK_FTRACE_DEFAULT_ENABLE
 static __init int enable_ftrace(void)
 {
-#ifdef CONFIG_SEC_DEBUG
-	if (sec_debug_level.en.kernel_fault == 0)
-		return 0;
-#endif
 	if (!boot_trace) {
 		/* enable ftrace facilities */
 		ftrace_events_enable(1);
