@@ -64,7 +64,6 @@ struct usb_configuration;
  * @name: Extended Property name
  * @data_len: Length of Extended Property blob (for unicode store double len)
  * @data: Extended Property blob
- * @item: Represents this Extended Property in configfs
  */
 struct usb_os_desc_ext_prop {
 	struct list_head	entry;
@@ -73,7 +72,6 @@ struct usb_os_desc_ext_prop {
 	char			*name;
 	int			data_len;
 	char			*data;
-	struct config_item	item;
 };
 
 /**
@@ -82,18 +80,12 @@ struct usb_os_desc_ext_prop {
  * @ext_prop: Extended Properties list
  * @ext_prop_len: Total length of Extended Properties blobs
  * @ext_prop_count: Number of Extended Properties
- * @opts_mutex: Optional mutex protecting config data of a usb_function_instance
- * @group: Represents OS descriptors associated with an interface in configfs
- * @owner: Module associated with this OS descriptor
  */
 struct usb_os_desc {
 	char			*ext_compat_id;
 	struct list_head	ext_prop;
 	int			ext_prop_len;
 	int			ext_prop_count;
-	struct mutex		*opts_mutex;
-	struct config_group	group;
-	struct module		*owner;
 };
 
 /**
@@ -409,8 +401,6 @@ extern void usb_composite_unregister(struct usb_composite_driver *driver);
 extern void usb_composite_setup_continue(struct usb_composite_dev *cdev);
 extern int composite_dev_prepare(struct usb_composite_driver *composite,
 		struct usb_composite_dev *cdev);
-extern int composite_os_desc_req_prepare(struct usb_composite_dev *cdev,
-					 struct usb_ep *ep0);
 void composite_dev_cleanup(struct usb_composite_dev *cdev);
 
 static inline struct usb_composite_driver *to_cdriver(
@@ -567,9 +557,6 @@ struct usb_function_instance {
 	struct config_group group;
 	struct list_head cfs_list;
 	struct usb_function_driver *fd;
-	struct usb_function *f;
-	int (*set_inst_name)(struct usb_function_instance *inst,
-			      const char *name);
 	void (*free_func_inst)(struct usb_function_instance *inst);
 };
 
