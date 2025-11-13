@@ -1467,7 +1467,7 @@ static int usbg_get_cmd_state(struct se_cmd *se_cmd)
 	return 0;
 }
 
-static int usbg_queue_tm_rsp(struct se_cmd *se_cmd)
+static void usbg_queue_tm_rsp(struct se_cmd *se_cmd)
 {
 	return 0;
 }
