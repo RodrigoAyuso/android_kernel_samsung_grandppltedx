@@ -851,91 +851,6 @@ static struct android_usb_function acm_function = {
 	.attributes	= acm_function_attributes,
 };
 
-#ifdef CONFIG_USB_F_LOOPBACK
-
-#define MAX_LOOPBACK_INSTANCES 1
-
-struct loopback_function_config {
-	int port_num;
-	struct usb_function *f_lp[MAX_LOOPBACK_INSTANCES];
-	struct usb_function_instance *f_lp_inst[MAX_LOOPBACK_INSTANCES];
-};
-
-static int loopback_function_init(struct android_usb_function *f, struct usb_composite_dev *cdev)
-{
-	int i;
-	int ret;
-	struct loopback_function_config *config;
-
-	config = kzalloc(sizeof(struct loopback_function_config), GFP_KERNEL);
-	if (!config)
-		return -ENOMEM;
-	f->config = config;
-
-	for (i = 0; i < MAX_LOOPBACK_INSTANCES; i++) {
-		config->f_lp_inst[i] = usb_get_function_instance("loopback");
-		if (IS_ERR(config->f_lp_inst[i])) {
-			ret = PTR_ERR(config->f_lp_inst[i]);
-			goto err_usb_get_function_instance;
-		}
-		config->f_lp[i] = usb_get_function(config->f_lp_inst[i]);
-		if (IS_ERR(config->f_lp[i])) {
-			ret = PTR_ERR(config->f_lp[i]);
-			goto err_usb_get_function;
-		}
-	}
-	return 0;
-err_usb_get_function_instance:
-	pr_err("Could not usb_get_function_instance() %d\n", i);
-	while (i-- > 0) {
-		usb_put_function(config->f_lp[i]);
-err_usb_get_function:
-		pr_err("Could not usb_get_function() %d\n", i);
-		usb_put_function_instance(config->f_lp_inst[i]);
-	}
-	return ret;
-}
-
-static void loopback_function_cleanup(struct android_usb_function *f)
-{
-	int i;
-	struct loopback_function_config *config = f->config;
-
-	for (i = 0; i < MAX_LOOPBACK_INSTANCES; i++) {
-		usb_put_function(config->f_lp[i]);
-		usb_put_function_instance(config->f_lp_inst[i]);
-	}
-	kfree(f->config);
-	f->config = NULL;
-}
-
-static int
-loopback_function_bind_config(struct android_usb_function *f, struct usb_configuration *c)
-{
-	int ret = 0;
-	struct loopback_function_config *config = f->config;
-
-	ret = usb_add_function(c, config->f_lp[config->port_num]);
-	if (ret) {
-		pr_err("Could not bind loopback%u config\n", config->port_num);
-		goto err_usb_add_function;
-	}
-	pr_info("%s Open loopback\n", __func__);
-
-	return 0;
-
-err_usb_add_function:
-	usb_remove_function(c, config->f_lp[config->port_num]);
-	return ret;
-}
-
-static struct android_usb_function loopback_function = {
-	.name		= "loopback",
-	.init		= loopback_function_init,
-	.cleanup	= loopback_function_cleanup,
-	.bind_config	= loopback_function_bind_config,
-};
-#endif
 #ifndef CONFIG_USB_ANDROID_SAMSUNG_COMPOSITE
 #define MAX_SERIAL_INSTANCES 4
 
@@ -2002,9 +1917,6 @@ static struct android_usb_function *supported_functions[] = {
 	&rawbulk_pcv_function,
 	&rawbulk_gps_function,
 #endif
-#endif
-#ifdef CONFIG_USB_F_LOOPBACK
-	&loopback_function,
 #endif
 	NULL
 };
