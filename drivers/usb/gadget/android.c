@@ -61,6 +61,7 @@
 #include "rndis.h"
 #ifndef CONFIG_USB_ANDROID_SAMSUNG_COMPOSITE
 #include "u_ecm.h"
+#define USB_FEEM_INCLUDED
 #include "f_eem.c"
 #else
 #include "f_dm.c"
