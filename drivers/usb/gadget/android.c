@@ -48,8 +48,7 @@
 #ifdef CONFIG_SND_RAWMIDI
 #include "f_midi.c"
 #endif
-#define USB_FMS_INCLUDED
-#include "f_mass_storage.c"
+#include "f_mass_storage.h"
 #include "f_adb.c"
 #ifdef CONFIG_USB_ANDROID_SAMSUNG_MTP
 #include "f_mtp_samsung.c"
@@ -1528,25 +1527,41 @@ static struct android_usb_function rndis_function = {
 	.attributes	= rndis_function_attributes,
 };
 
+#define fsg_num_buffers	CONFIG_USB_GADGET_STORAGE_NUM_BUFFERS
+static struct fsg_module_parameters fsg_mod_data;
+FSG_MODULE_PARAMETERS(/* no prefix */, fsg_mod_data);
 
 struct mass_storage_function_config {
-	struct fsg_config fsg;
-	struct fsg_common *common;
+	struct usb_function *f_ms;
+	struct usb_function_instance *f_ms_inst;
 };
 
 static int mass_storage_function_init(struct android_usb_function *f,
 					struct usb_composite_dev *cdev)
 {
 	struct mass_storage_function_config *config;
-	struct fsg_common *common;
-	int err;
-	int i;
+	int ret, i;
+	struct fsg_opts *fsg_opts;
+	struct fsg_config m_config;
 
+	pr_debug("%s(): Inside\n", __func__);
 	config = kzalloc(sizeof(struct mass_storage_function_config),
 								GFP_KERNEL);
 	if (!config)
 		return -ENOMEM;
+	f->config = config;
 
+	config->f_ms_inst = usb_get_function_instance("mass_storage");
+	if (IS_ERR(config->f_ms_inst)) {
+		ret = PTR_ERR(config->f_ms_inst);
+		goto err_usb_get_function_instance;
+	}
+
+	config->f_ms = usb_get_function(config->f_ms_inst);
+	if (IS_ERR(config->f_ms)) {
+		ret = PTR_ERR(config->f_ms);
+		goto err_usb_get_function;
+	}
 #ifdef CONFIG_MTK_MULTI_STORAGE_SUPPORT
 #ifdef CONFIG_MTK_SHARED_SDCARD
 #define NLUN_STORAGE 1
@@ -1557,58 +1572,77 @@ static int mass_storage_function_init(struct android_usb_function *f,
 #define NLUN_STORAGE 1
 #endif
 
-#ifdef CONFIG_MTK_ICUSB_SUPPORT
-#define NLUN_ICUSB (1)
-#else
-#define NLUN_ICUSB (0)
-#endif
-
-	config->fsg.nluns = NLUN_STORAGE + NLUN_ICUSB;
-
-	for(i = 0; i < config->fsg.nluns; i++) {
-		config->fsg.luns[i].removable = 1;
-		config->fsg.luns[i].nofua = 1;
+	fsg_mod_data.file_count = NLUN_STORAGE;
+	for (i = 0 ; i < fsg_mod_data.file_count; i++) {
+		fsg_mod_data.file[i] = "";
+		fsg_mod_data.removable[i] = true;
+		fsg_mod_data.nofua[i] = true;
 	}
 
-	common = fsg_common_init(NULL, cdev, &config->fsg);
-	if (IS_ERR(common)) {
-		kfree(config);
-		return PTR_ERR(common);
+	fsg_config_from_params(&m_config, &fsg_mod_data, fsg_num_buffers);
+	fsg_opts = fsg_opts_from_func_inst(config->f_ms_inst);
+
+	ret = fsg_common_set_nluns(fsg_opts->common, m_config.nluns);
+	if (ret) {
+		pr_err("%s(): error(%d) for fsg_common_set_nluns\n",
+						__func__, ret);
 	}
 
-	err = sysfs_create_link(&f->dev->kobj,
-				&common->luns[0].dev.kobj,
-				"lun");
-	if (err) {
-		kfree(config);
-		return err;
+	/* note this is important for sysfs manipulation and this will be override when fsg_main_thread be created*/
+	ret = fsg_common_set_cdev(fsg_opts->common, cdev,
+						m_config.can_stall);
+	if (ret) {
+		pr_err("%s(): error(%d) for fsg_common_set_cdev\n",
+						__func__, ret);
 	}
 
-	/*
-	 * "i" starts from "1", cuz dont want to change the naming of
-	 * the original path of "lun0".
-	 */
-	for(i = 1; i < config->fsg.nluns; i++) {
-		char string_lun[5]={0};
-
-		sprintf(string_lun, "lun%d",i);
-
-		err = sysfs_create_link(&f->dev->kobj,
-				&common->luns[i].dev.kobj,
-				string_lun);
-		if (err) {
-			kfree(config);
-			return err;
-		}
+	/* this will affect lun create name */
+	fsg_common_set_sysfs(fsg_opts->common, true);
+	ret = fsg_common_create_luns(fsg_opts->common, &m_config);
+	if (ret) {
+		pr_err("%s(): error(%d) for fsg_common_create_luns\n",
+						__func__, ret);
 	}
 
-	config->common = common;
-	f->config = config;
+	/* use default one currently */
+	fsg_common_set_inquiry_string(fsg_opts->common, m_config.vendor_name,
+							m_config.product_name);
+
+	/* SYSFS create */
+	fsg_sysfs_update(fsg_opts->common, f->dev, true);
+
+	/* invoke thread */
+	ret = fsg_common_run_thread(fsg_opts->common);
+	if (ret)
+		return ret;
+
+	/* setup this to avoid create fsg thread in fsg_bind again */
+	fsg_opts->no_configfs = true;
+
 	return 0;
+
+
+err_usb_get_function:
+	usb_put_function_instance(config->f_ms_inst);
+
+err_usb_get_function_instance:
+	return ret;
 }
 
 static void mass_storage_function_cleanup(struct android_usb_function *f)
 {
+	struct mass_storage_function_config *config = f->config;
+
+	/* release what we required */
+	struct fsg_opts *fsg_opts;
+
+	fsg_opts = fsg_opts_from_func_inst(config->f_ms_inst);
+	fsg_sysfs_update(fsg_opts->common, f->dev, false);
+	fsg_common_free_luns(fsg_opts->common);
+
+	usb_put_function(config->f_ms);
+	usb_put_function_instance(config->f_ms_inst);
+
 	kfree(f->config);
 	f->config = NULL;
 }
@@ -1617,27 +1651,36 @@ static int mass_storage_function_bind_config(struct android_usb_function *f,
 						struct usb_configuration *c)
 {
 	struct mass_storage_function_config *config = f->config;
-	return fsg_bind_config(c->cdev, c, config->common);
+	int ret = 0;
+
+	/* no_configfs :true, make fsg_bind skip for creating fsg thread */
+	ret = usb_add_function(c, config->f_ms);
+	if (ret)
+		pr_err("Could not bind config\n");
+
+	return 0;
 }
 
 static ssize_t mass_storage_inquiry_show(struct device *dev,
 				struct device_attribute *attr, char *buf)
 {
+	struct fsg_opts *fsg_opts;
 	struct android_usb_function *f = dev_get_drvdata(dev);
 	struct mass_storage_function_config *config = f->config;
-	return sprintf(buf, "%s\n", config->common->inquiry_string);
+	fsg_opts = fsg_opts_from_func_inst(config->f_ms_inst);
+
+	return fsg_inquiry_show(fsg_opts->common, buf);
 }
 
 static ssize_t mass_storage_inquiry_store(struct device *dev,
 		struct device_attribute *attr, const char *buf, size_t size)
 {
+	struct fsg_opts *fsg_opts;
 	struct android_usb_function *f = dev_get_drvdata(dev);
 	struct mass_storage_function_config *config = f->config;
-	if (size >= sizeof(config->common->inquiry_string))
-		return -EINVAL;
-	if (sscanf(buf, "%s", config->common->inquiry_string) != 1)
-		return -EINVAL;
-	return size;
+	fsg_opts = fsg_opts_from_func_inst(config->f_ms_inst);
+
+	return fsg_inquiry_store(fsg_opts->common, buf, size);
 }
 
 static DEVICE_ATTR(inquiry_string, S_IRUGO | S_IWUSR,
@@ -1649,7 +1692,9 @@ static ssize_t mass_storage_bicr_show(struct device *dev,
 {
 	struct android_usb_function *f = dev_get_drvdata(dev);
 	struct mass_storage_function_config *config = f->config;
-	return sprintf(buf, "%d\n", config->common->bicr);
+	struct fsg_opts *fsg_opts = fsg_opts_from_func_inst(config->f_ms_inst);
+
+	return fsg_bicr_show(fsg_opts->common, buf);
 }
 
 static ssize_t mass_storage_bicr_store(struct device *dev,
@@ -1657,23 +1702,9 @@ static ssize_t mass_storage_bicr_store(struct device *dev,
 {
 	struct android_usb_function *f = dev_get_drvdata(dev);
 	struct mass_storage_function_config *config = f->config;
-	if (size >= sizeof(config->common->bicr))
-		return -EINVAL;
-	if (sscanf(buf, "%d", &config->common->bicr) != 1)
-		return -EINVAL;
+	struct fsg_opts *fsg_opts = fsg_opts_from_func_inst(config->f_ms_inst);
 
-	/* Set Lun[0] is a CDROM when enable bicr.*/
-	if (!strcmp(buf, "1"))
-		config->common->luns[0].cdrom = 1;
-	else {
-		/*Reset the value. Clean the cdrom's parameters*/
-		config->common->luns[0].cdrom = 0;
-		config->common->luns[0].blkbits = 0;
-		config->common->luns[0].blksize = 0;
-		config->common->luns[0].num_sectors = 0;
-	}
-
-	return size;
+	return fsg_bicr_store(fsg_opts->common, buf, size);
 }
 
 static DEVICE_ATTR(bicr, S_IRUGO | S_IWUSR,

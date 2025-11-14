@@ -323,11 +323,13 @@ struct fsg_common {
 	 * Vendor (8 chars), product (16 chars), release (4
 	 * hexadecimal digits) and NUL byte
 	 */
-	char inquiry_string[8 + 16 + 4 + 1];
+	char inquiry_string[INQUIRY_MAX_LEN];
+	/* LUN name for sysfs purpose */
+	char name[FSG_MAX_LUNS][LUN_NAME_LEN];
 
 	struct kref		ref;
 
-	int  bicr;
+	u8 bicr;
 
 	void (*android_callback)(unsigned char);
 };
@@ -3286,6 +3288,81 @@ static void fsg_common_release(struct kref *ref)
 		kfree(common);
 }
 
+int fsg_sysfs_update(struct fsg_common *common, struct device *dev, bool create)
+{
+	int ret = 0, i;
+
+	pr_debug("%s(): common->nluns:%d\n", __func__, common->nluns);
+	if (create) {
+		for (i = 0; i < common->nluns; i++) {
+			if (i == 0)
+				snprintf(common->name[i], 8, "lun");
+			else
+				snprintf(common->name[i], 8, "lun%d", i-1);
+			ret = sysfs_create_link(&dev->kobj,
+					&common->luns[i]->dev.kobj,
+					common->name[i]);
+			if (ret) {
+				pr_err("%s(): failed creating sysfs:%d %s)\n",
+						__func__, i, common->name[i]);
+				goto remove_sysfs;
+			}
+		}
+	} else {
+		i = common->nluns;
+		goto remove_sysfs;
+	}
+
+	return 0;
+
+remove_sysfs:
+	for (; i > 0; i--) {
+		pr_debug("%s(): delete sysfs for lun(id:%d)(name:%s)\n",
+					__func__, i, common->name[i-1]);
+		sysfs_remove_link(&dev->kobj, common->name[i-1]);
+	}
+
+	return ret;
+}
+
+ssize_t fsg_inquiry_show(struct fsg_common *common, char *buf)
+{
+	return snprintf(buf, PAGE_SIZE, "%s\n", common->inquiry_string);
+}
+ssize_t fsg_inquiry_store(struct fsg_common *common, const char *buf, size_t size)
+{
+	if (size >= sizeof(common->inquiry_string))
+		return -EINVAL;
+
+	if (sscanf(buf, "%28s", common->inquiry_string) != 1)
+		return -EINVAL;
+	return size;
+}
+
+ssize_t fsg_bicr_show(struct fsg_common *common, char *buf)
+{
+	return sprintf(buf, "%d\n", common->bicr);
+}
+ssize_t fsg_bicr_store(struct fsg_common *common, const char *buf, size_t size)
+{
+	int ret;
+
+	ret = kstrtou8(buf, 10, &common->bicr);
+	if (ret)
+		return -EINVAL;
+
+	/* Set Lun[0] is a CDROM when enable bicr.*/
+	if (!strcmp(buf, "1"))
+		common->luns[0]->cdrom = 1;
+	else {
+		common->luns[0]->cdrom = 0;
+		common->luns[0]->blkbits = 0;
+		common->luns[0]->blksize = 0;
+		common->luns[0]->num_sectors = 0;
+	}
+
+	return size;
+}
 
 /*-------------------------------------------------------------------------*/
 
