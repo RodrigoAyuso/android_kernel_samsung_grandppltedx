@@ -26,6 +26,7 @@
 #include <linux/ethtool.h>
 #include <linux/if_vlan.h>
 #include "u_ether.h"
+#include "rndis.h"
 
 /*
  * This component encapsulates the Ethernet link glue needed to provide

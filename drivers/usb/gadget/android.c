@@ -65,8 +65,9 @@
 #else
 #include "f_dm.c"
 #endif
-#include "u_ether.c"
+#include "u_ether.h"
 
+USB_ETHERNET_MODULE_PARAMETERS();
 
 #ifdef CONFIG_MTK_C2K_SUPPORT
 #include "viatel_rawbulk.h"
@@ -1100,7 +1101,8 @@ ecm_function_bind_config(struct android_usb_function *f,
 		ecm->ethaddr[0], ecm->ethaddr[1], ecm->ethaddr[2],
 		ecm->ethaddr[3], ecm->ethaddr[4], ecm->ethaddr[5]);
 
-	dev = gether_setup_name(c->cdev->gadget, ecm->ethaddr, "rndis");
+	dev = gether_setup_name(c->cdev->gadget, dev_addr, host_addr,
+			eem->ethaddr, qmult, "rndis");
 	if (IS_ERR(dev)) {
 		ret = PTR_ERR(dev);
 		pr_err("%s: gether_setup failed\n", __func__);
@@ -1200,7 +1202,8 @@ eem_function_bind_config(struct android_usb_function *f,
 		eem->ethaddr[0], eem->ethaddr[1], eem->ethaddr[2],
 		eem->ethaddr[3], eem->ethaddr[4], eem->ethaddr[5]);
 
-	dev = gether_setup_name(c->cdev->gadget, eem->ethaddr, "rndis");
+	dev = gether_setup_name(c->cdev->gadget, dev_addr, host_addr,
+			eem->ethaddr, qmult, "rndis");
 	if (IS_ERR(dev)) {
 		ret = PTR_ERR(dev);
 		pr_err("%s: gether_setup failed\n", __func__);
@@ -1305,7 +1308,8 @@ rndis_function_bind_config(struct android_usb_function *f,
 		rndis->ethaddr[0], rndis->ethaddr[1], rndis->ethaddr[2],
 		rndis->ethaddr[3], rndis->ethaddr[4], rndis->ethaddr[5]);
 
-	dev = gether_setup_name(c->cdev->gadget, rndis->ethaddr, "rndis");
+	dev = gether_setup_name(c->cdev->gadget, dev_addr, host_addr,
+			rndis->ethaddr, qmult, "rndis");
 	if (IS_ERR(dev)) {
 		ret = PTR_ERR(dev);
 		pr_err("%s: gether_setup failed\n", __func__);
