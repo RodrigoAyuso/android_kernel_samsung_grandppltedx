@@ -48,6 +48,7 @@
 #ifdef CONFIG_SND_RAWMIDI
 #include "f_midi.c"
 #endif
+#define USB_FMS_INCLUDED
 #include "f_mass_storage.c"
 #include "f_adb.c"
 #ifdef CONFIG_USB_ANDROID_SAMSUNG_MTP
