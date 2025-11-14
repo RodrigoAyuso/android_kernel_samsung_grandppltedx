@@ -61,8 +61,7 @@
 #include "rndis.h"
 #ifndef CONFIG_USB_ANDROID_SAMSUNG_COMPOSITE
 #include "u_ecm.h"
-#define USB_FEEM_INCLUDED
-#include "f_eem.c"
+#include "u_eem.h"
 #else
 #include "f_dm.c"
 #endif
@@ -1193,61 +1192,85 @@ static struct android_usb_function ecm_function = {
 struct eem_function_config {
 	u8      ethaddr[ETH_ALEN];
 	char	manufacturer[256];
-	struct eth_dev *dev;
+	struct usb_function *f_eem;
+	struct usb_function_instance *fi_eem;
 };
 
 static int
 eem_function_init(struct android_usb_function *f,
 		struct usb_composite_dev *cdev)
 {
-	f->config = kzalloc(sizeof(struct eem_function_config), GFP_KERNEL);
-	if (!f->config)
+	struct eem_function_config *config;
+	config = kzalloc(sizeof(struct eem_function_config), GFP_KERNEL);
+
+	if (!config)
 		return -ENOMEM;
-	return 0;
+	f->config = config;
+
+	config->fi_eem = usb_get_function_instance("eem");
+	if (IS_ERR(config->fi_eem))
+		return PTR_ERR(config->fi_eem);
 }
 
 static void eem_function_cleanup(struct android_usb_function *f)
 {
+	struct eem_function_config *config = f->config;
+
+	if (config) {
+		usb_put_function(config->f_eem);
+		usb_put_function_instance(config->fi_eem);
+	}
+
 	kfree(f->config);
 	f->config = NULL;
 }
 
 static int
 eem_function_bind_config(struct android_usb_function *f,
-		struct usb_configuration *c)
+					struct usb_configuration *c)
 {
 	int ret;
-	struct eth_dev *dev;
 	struct eem_function_config *eem = f->config;
-
-	pr_notice("[USB]%s: \n", __func__);
+	struct f_eem_opts *eem_opts = NULL;
 
 	if (!eem) {
-		pr_err("%s: rndis_pdata\n", __func__);
-		return -1;
+		pr_err("%s: eem_pdata\n", __func__);
+		return -EINVAL;
 	}
 
 	pr_info("%s MAC: %02X:%02X:%02X:%02X:%02X:%02X\n", __func__,
 		eem->ethaddr[0], eem->ethaddr[1], eem->ethaddr[2],
 		eem->ethaddr[3], eem->ethaddr[4], eem->ethaddr[5]);
 
-	dev = gether_setup_name(c->cdev->gadget, dev_addr, host_addr,
-			eem->ethaddr, qmult, "rndis");
-	if (IS_ERR(dev)) {
-		ret = PTR_ERR(dev);
-		pr_err("%s: gether_setup failed\n", __func__);
-		return ret;
-	}
-	eem->dev = dev;
+	eem_opts = container_of(eem->fi_eem, struct f_eem_opts, func_inst);
+	strlcpy(eem_opts->net->name, "eem%%d", sizeof(eem_opts->net->name));
+	gether_set_qmult(eem_opts->net, qmult);
+	if (!gether_set_host_addr(eem_opts->net, host_addr))
+		pr_info("using host ethernet address: %s", host_addr);
+	if (!gether_set_dev_addr(eem_opts->net, dev_addr))
+		pr_info("using self ethernet address: %s", dev_addr);
 
-	return eem_bind_config(c, eem->dev);
+	gether_set_gadget(eem_opts->net, c->cdev->gadget);
+	ret = gether_register_netdev(eem_opts->net);
+	if (ret)
+		return ret;
+	eem_opts->bound = true;
+	gether_get_host_addr_u8(eem_opts->net, eem->ethaddr);
+
+	eem->f_eem = usb_get_function(eem->fi_eem);
+	if (IS_ERR(eem->f_eem))
+		return PTR_ERR(eem->f_eem);
+
+	return usb_add_function(c, eem->fi_eem);
 }
 
 static void eem_function_unbind_config(struct android_usb_function *f,
 						struct usb_configuration *c)
 {
 	struct eem_function_config *eem = f->config;
-	gether_cleanup(eem->dev);
+
+	if (eem->f_eem)
+		usb_remove_function(c, eem->f_eem);
 }
 
 static ssize_t eem_ethaddr_show(struct device *dev,
