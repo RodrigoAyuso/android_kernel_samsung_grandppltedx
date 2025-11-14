@@ -827,6 +827,7 @@ config USB_G_ANDROID
 	select USB_LIBCOMPOSITE
 	select USB_U_SERIAL
 	select USB_U_ETHER
+	select USB_U_RNDIS
 	help
 	  The Android Composite Gadget supports multiple USB
 	  functions: adb, acm, mass storage, mtp, accessory

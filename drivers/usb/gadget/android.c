@@ -58,7 +58,7 @@
 #include "f_accessory.c"
 #define USB_ETH_RNDIS y
 #include "f_rndis.c"
-#include "rndis.c"
+#include "rndis.h"
 #ifndef CONFIG_USB_ANDROID_SAMSUNG_COMPOSITE
 #include "f_ecm.c"
 #include "f_eem.c"
