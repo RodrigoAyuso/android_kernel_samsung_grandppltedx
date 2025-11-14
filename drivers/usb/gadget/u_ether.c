@@ -119,16 +119,6 @@ static inline int qlen(struct usb_gadget *gadget)
 		return DEFAULT_QLEN;
 }
 
-static inline int qlenrx(struct usb_gadget *gadget)
-{
-	if (gadget_is_dualspeed(gadget) && (gadget->speed == USB_SPEED_HIGH ||
-					    gadget->speed == USB_SPEED_SUPER))
-		return qmult * DEFAULT_QLEN;
-
-	else
-		return DEFAULT_QLEN;
-}
-
 /*-------------------------------------------------------------------------*/
 
 /* REVISIT there must be a better way than having two sets
@@ -425,36 +415,24 @@ extra:
 	return 0;
 }
 
-static int alloc_tx_requests(struct eth_dev *dev, struct gether *link, unsigned n)
+static int alloc_requests(struct eth_dev *dev, struct gether *link, unsigned n)
 {
 	int	status;
 
 	spin_lock(&dev->req_lock);
 	status = prealloc(&dev->tx_reqs, link->in_ep, n);
-	if (status < 0)
-		goto fail;
-
-	goto done;
-fail:
-	DBG(dev, "can't alloc tx requests\n");
-done:
+	if (status < 0) {
+		DBG(dev, "can't alloc tx requests\n");
+	}
 	spin_unlock(&dev->req_lock);
-	return status;
-}
-static int alloc_rx_requests(struct eth_dev *dev, struct gether *link, unsigned n)
-{
-	int	status;
 
 	spin_lock(&dev->reqrx_lock);
-
 	status = prealloc(&dev->rx_reqs, link->out_ep, n);
-	if (status < 0)
-		goto fail;
-	goto done;
-fail:
-	DBG(dev, "can't alloc rx requests\n");
-done:
+	if (status < 0) {
+		DBG(dev, "can't alloc rx requests\n");
+	}
 	spin_unlock(&dev->reqrx_lock);
+
 	return status;
 }
 
@@ -468,7 +446,7 @@ static void rx_fill(struct eth_dev *dev, gfp_t gfp_flags)
 	spin_lock_irqsave(&dev->reqrx_lock, flags);
 	while (!list_empty(&dev->rx_reqs)) {
 		/* break the nexus of continuous completion and re-submission*/
-		if (++req_cnt > qlenrx(dev->gadget))
+		if (++req_cnt > qlen(dev->gadget))
 			break;
 
 		req = container_of(dev->rx_reqs.next,
@@ -1211,11 +1189,8 @@ struct net_device *gether_connect(struct gether *link)
 		goto fail1;
 	}
 
-	if (result == 0) {
-		result = alloc_tx_requests(dev, link, qlen(dev->gadget));
-		if(result == 0)  
-			result = alloc_rx_requests(dev, link, qlenrx(dev->gadget));		
-	} 
+	if (result == 0)
+		result = alloc_requests(dev, link, qlen(dev->gadget));
 
 	if (result == 0) {
 		dev->zlp = link->is_zlp_ok;
