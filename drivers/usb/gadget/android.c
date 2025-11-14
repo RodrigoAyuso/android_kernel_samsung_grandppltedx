@@ -60,6 +60,7 @@
 #include "f_rndis.c"
 #include "rndis.h"
 #ifndef CONFIG_USB_ANDROID_SAMSUNG_COMPOSITE
+#define USBF_ECM_INCLUDED
 #include "f_ecm.c"
 #include "f_eem.c"
 #else
