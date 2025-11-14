@@ -979,7 +979,6 @@ config USB_G_ANDROID
 	select USB_U_SERIAL
 	select USB_U_ETHER
 	select USB_U_RNDIS
-	select USB_U_MS
 	select USB_F_ECM
 	select USB_F_EEM
 	select USB_F_MASS_STORAGE
