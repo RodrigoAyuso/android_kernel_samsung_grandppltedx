@@ -108,9 +108,6 @@ static int composite_string_index;
 #define MANUFACTURER_STRING "MediaTek"
 #define PRODUCT_STRING "MT65xx Android Phone"
 
-
-//#define USB_LOG "USB"
-
 struct android_usb_function {
 	char *name;
 	void *config;
@@ -1059,7 +1056,7 @@ static struct android_usb_function ptp_function = {
 #ifdef CONFIG_USB_ANDROID_SAMSUNG_COMPOSITE
 	.ctrlrequest	= mtp_function_ctrlrequest,
 #else
-	.ctrlrequest	= ptp_function_ctrlrequest, //ALPS01832160
+	.ctrlrequest	= ptp_function_ctrlrequest,
 #endif
 };
 

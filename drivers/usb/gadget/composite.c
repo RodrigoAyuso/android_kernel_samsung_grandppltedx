@@ -192,8 +192,6 @@ int usb_add_function(struct usb_configuration *config,
 		struct usb_function *function)
 {
 	int	value = -EINVAL;
-	
-	pr_debug("[XLOG_DEBUG][USB][COM]%s: \n", __func__);
 
 	INFO(config->cdev, "adding '%s'/%p to config '%s'/%p\n",
 			function->name, function,
@@ -836,7 +834,6 @@ int usb_add_config(struct usb_composite_dev *cdev,
 			}
 		}
 		list_del(&config->list);
-		pr_debug("[XLOG_DEBUG][USB][COM]bind fialed and the list should be init because there is one entry only");
 		config->cdev = NULL;
 	} else {
 		unsigned	i;
@@ -1980,8 +1977,6 @@ int usb_composite_probe(struct usb_composite_driver *driver)
 
 	if (!driver || !driver->dev || !driver->bind)
 		return -EINVAL;
-
-	pr_debug("[XLOG_DEBUG][USB][COM]%s: driver->name = %s", __func__, driver->name);
 
 	if (!driver->name)
 		driver->name = "composite";

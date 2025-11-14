@@ -30,8 +30,6 @@
 
 #include "u_serial.h"
 
-#define ACM_LOG "USB_ACM"
-
 /*
  * This component encapsulates the TTY layer glue needed to provide basic
  * "serial port" functionality through the USB gadget stack.  Each such
@@ -367,8 +365,6 @@ __acquires(&port->port_lock)
 	struct usb_ep		*in = port->port_usb->in;
 	int			status = 0;
 	bool			do_tty_wake = false;
-	static unsigned int	skip = 0;
-	static DEFINE_RATELIMIT_STATE(ratelimit, 1 * HZ, 10);
 
 	while (!list_empty(pool)) {
 		struct usb_request	*req;
@@ -392,18 +388,6 @@ __acquires(&port->port_lock)
 		pr_vdebug(PREFIX "%d: tx len=%d, 0x%02x 0x%02x 0x%02x ...\n",
 				port->port_num, len, *((u8 *)req->buf),
 				*((u8 *)req->buf+1), *((u8 *)req->buf+2));
-
-		if (__ratelimit(&ratelimit)) {
-			printk( ACM_LOG \
-				"%s: ttyGS%d: tx len=%d, 0x%02x 0x%02x 0x%02x ...\n", \
-				__func__, port->port_num, len, *((u8 *)req->buf), \
-				*((u8 *)req->buf+1), *((u8 *)req->buf+2));
-			if (skip > 0) {
-				printk( ACM_LOG "%s Too many data, skipped %d bytes", __func__, skip);
-				skip = 0;
-			}
-		} else
-			skip += req->actual;
 
 		/* Drop lock while we call out of driver; completions
 		 * could be issued while we do so.  Disconnection may
@@ -503,8 +487,6 @@ static void gs_rx_push(unsigned long _port)
 	struct list_head	*queue = &port->read_queue;
 	bool			disconnect = false;
 	bool			do_push = false;
-	static unsigned int	skip = 0;
-	static DEFINE_RATELIMIT_STATE(ratelimit, 1 * HZ, 10);
 
 	/* hand any queued data to the tty */
 	spin_lock_irq(&port->port_lock);
@@ -533,18 +515,6 @@ static void gs_rx_push(unsigned long _port)
 			/* normal completion */
 			break;
 		}
-
-		if (__ratelimit(&ratelimit)) {
-			printk( ACM_LOG \
-				"%s: ttyGS%d: actual=%d, n_read=%d 0x%02x 0x%02x 0x%02x ...\n", \
-				__func__, port->port_num, req->actual, port->n_read,
-				*((u8 *)req->buf), *((u8 *)req->buf+1), *((u8 *)req->buf+2));
-			if (skip > 0) {
-				printk( ACM_LOG "%s Too many data, skipped %d bytes", __func__, skip);
-				skip = 0;
-			}
-		} else
-			skip += req->actual;
 
 		/* push data to (open) tty */
 		if (req->actual) {
@@ -840,9 +810,6 @@ static int gs_open(struct tty_struct *tty, struct file *file)
 
 	pr_debug("gs_open: ttyGS%d (%p,%p)\n", port->port_num, tty, file);
 
-	printk( ACM_LOG \
-		"gs_open: ttyGS%d (%p,%p)\n", port->port_num, tty, file);
-
 	status = 0;
 
 exit_unlock_port:
@@ -878,9 +845,6 @@ static void gs_close(struct tty_struct *tty, struct file *file)
 	}
 
 	pr_debug("gs_close: ttyGS%d (%p,%p) ...\n", port->port_num, tty, file);
-
-	printk( ACM_LOG \
-		"gs_close: ttyGS%d (%p,%p) ...\n", port->port_num, tty, file);
 
 	/* mark port as closing but in use; we can drop port lock
 	 * and sleep if necessary
@@ -931,14 +895,6 @@ static int gs_write(struct tty_struct *tty, const unsigned char *buf, int count)
 	struct gs_port	*port = tty->driver_data;
 	unsigned long	flags;
 	int		status;
-	//ALPS00423739
-	if(!port)
-	{
-		printk("ERROR!!! port is closed!! %s, line %d: port = %p\n", __func__, __LINE__, port);
-		/*abort immediately after disconnect */
-		return -EINVAL;
-	}
-	//ALPS00423739
 
 	pr_vdebug("gs_write: ttyGS%d (%p) writing %d bytes\n",
 			port->port_num, tty, count);
@@ -960,15 +916,6 @@ static int gs_put_char(struct tty_struct *tty, unsigned char ch)
 	unsigned long	flags;
 	int		status;
 
-	//ALPS00423739
-	if(!port)
-	{
-		printk("ERROR!!! port is closed!! %s, line %d: port = %p\n", __func__, __LINE__, port);
-		/*abort immediately after disconnect */
-		return -EINVAL;
-	}
-	//ALPS00423739
-
 	pr_vdebug("gs_put_char: (%d,%p) char=0x%x, called from %pf\n",
 		port->port_num, tty, ch, __builtin_return_address(0));
 
@@ -984,15 +931,6 @@ static void gs_flush_chars(struct tty_struct *tty)
 	struct gs_port	*port = tty->driver_data;
 	unsigned long	flags;
 
-	//ALPS00423739
-	if(!port)
-	{
-		printk("ERROR!!! port is closed!! %s, line %d: port = %p\n", __func__, __LINE__, port);
-		/*abort immediately after disconnect */
-		return;
-	}
-	//ALPS00423739
-
 	pr_vdebug("gs_flush_chars: (%d,%p)\n", port->port_num, tty);
 
 	spin_lock_irqsave(&port->port_lock, flags);
@@ -1006,15 +944,6 @@ static int gs_write_room(struct tty_struct *tty)
 	struct gs_port	*port = tty->driver_data;
 	unsigned long	flags;
 	int		room = 0;
-
-	//ALPS00423739
-	if(!port)
-	{
-		printk("ERROR!!! port is closed!! %s, line %d: port = %p\n", __func__, __LINE__, port);
-		/*abort immediately after disconnect */
-		return -EINVAL;
-	}
-	//ALPS00423739
 
 	spin_lock_irqsave(&port->port_lock, flags);
 	if (port->port_usb)
@@ -1033,15 +962,6 @@ static int gs_chars_in_buffer(struct tty_struct *tty)
 	unsigned long	flags;
 	int		chars = 0;
 
-	//ALPS00423739
-	if(!port)
-	{
-		printk("ERROR!!! port is closed!! %s, line %d: port = %p\n", __func__, __LINE__, port);
-		/*abort immediately after disconnect */
-		return -EINVAL;
-	}
-	//ALPS00423739
-
 	spin_lock_irqsave(&port->port_lock, flags);
 	chars = gs_buf_data_avail(&port->port_write_buf);
 	spin_unlock_irqrestore(&port->port_lock, flags);
@@ -1057,15 +977,6 @@ static void gs_unthrottle(struct tty_struct *tty)
 {
 	struct gs_port		*port = tty->driver_data;
 	unsigned long		flags;
-
-	//ALPS00423739
-	if(!port)
-	{
-		printk("ERROR!!! port is closed!! %s, line %d: port = %p\n", __func__, __LINE__, port);
-		/*abort immediately after disconnect */
-		return;
-	}
-	//ALPS00423739
 
 	spin_lock_irqsave(&port->port_lock, flags);
 	if (port->port_usb) {
@@ -1084,15 +995,6 @@ static int gs_break_ctl(struct tty_struct *tty, int duration)
 	struct gs_port	*port = tty->driver_data;
 	int		status = 0;
 	struct gserial	*gser;
-
-	//ALPS00423739
-	if(!port)
-	{
-		printk("ERROR!!! port is closed!! %s, line %d: port = %p\n", __func__, __LINE__, port);
-		/*abort immediately after disconnect */
-		return -EINVAL;
-	}
-	//ALPS00423739
 
 	pr_vdebug("gs_break_ctl: ttyGS%d, send break (%d) \n",
 			port->port_num, duration);

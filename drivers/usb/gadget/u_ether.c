@@ -166,16 +166,6 @@ static inline int qlenrx(struct usb_gadget *gadget)
 
 /*-------------------------------------------------------------------------*/
 
-unsigned long rndis_test_rx_usb_in = 0 ;
-unsigned long rndis_test_rx_net_out = 0 ;
-unsigned long rndis_test_rx_nomem = 0 ;
-unsigned long rndis_test_rx_error = 0 ;
-
-unsigned long rndis_test_tx_net_in = 0 ;
-unsigned long rndis_test_tx_busy = 0 ;
-unsigned long rndis_test_tx_usb_out = 0 ;
-unsigned long rndis_test_tx_complete = 0 ;
-
 /* NETWORK DRIVER HOOKUP (to the layer above this driver) */
 
 static int ueth_change_mtu(struct net_device *net, int new_mtu)
@@ -193,8 +183,6 @@ static int ueth_change_mtu(struct net_device *net, int new_mtu)
 	else
 		net->mtu = new_mtu;
 	spin_unlock_irqrestore(&dev->lock, flags);
-
-	pr_debug("[XLOG_INFO][UTHER]ueth_change_mtu to %d, status is %d\n", new_mtu , status);
 
 	return status;
 }
@@ -281,9 +269,7 @@ rx_submit(struct eth_dev *dev, struct usb_request *req, gfp_t gfp_flags)
 		__func__, (int)size, dev->net->mtu, dev->port_usb->header_len, out->maxpacket, dev->ul_max_pkts_per_xfer);
 	skb = alloc_skb(size + NET_IP_ALIGN, gfp_flags);
 	if (skb == NULL) {
-		pr_debug("[XLOG_INFO][UTHER]rx_submit : no rx skb\n");
 		DBG(dev, "no rx skb\n");
-		rndis_test_rx_nomem ++ ;
 		goto enomem;
 	}
 
@@ -346,8 +332,6 @@ static void rx_complete(struct usb_ep *ep, struct usb_request *req)
 
 		if (!status)
 			queue = 1;
-
-		rndis_test_rx_usb_in ++ ;
 		break;
 
 	/* software-driven interface shutdown */
@@ -453,7 +437,6 @@ static int alloc_tx_requests(struct eth_dev *dev, struct gether *link, unsigned 
 	goto done;
 fail:
 	DBG(dev, "can't alloc tx requests\n");
-	pr_debug("[XLOG_INFO][UTHER]alloc_requests : can't alloc requests\n");
 done:
 	spin_unlock(&dev->req_lock);
 	return status;
@@ -470,7 +453,6 @@ static int alloc_rx_requests(struct eth_dev *dev, struct gether *link, unsigned 
 	goto done;
 fail:
 	DBG(dev, "can't alloc rx requests\n");
-	pr_debug("[XLOG_INFO][UTHER]alloc_requests : can't alloc rxrequests\n");
 done:
 	spin_unlock(&dev->reqrx_lock);
 	return status;
@@ -522,7 +504,6 @@ static void process_rx_w(struct work_struct *work)
 				|| skb->len > VLAN_ETH_FRAME_LEN) {
 			dev->net->stats.rx_errors++;
 			dev->net->stats.rx_length_errors++;
-			rndis_test_rx_error++ ;
 			DBG(dev, "rx length %d\n", skb->len);
 			dev_kfree_skb_any(skb);
 			continue;
@@ -531,7 +512,6 @@ static void process_rx_w(struct work_struct *work)
 		dev->net->stats.rx_packets++;
 		dev->net->stats.rx_bytes += skb->len;
 
-		rndis_test_rx_net_out ++ ;
 		status = netif_rx_ni(skb);
 	}
 
@@ -604,7 +584,6 @@ static void tx_complete(struct usb_ep *ep, struct usb_request *req)
 			dev->net->stats.tx_bytes += req->length;
 	}
 	dev->net->stats.tx_packets++;
-	rndis_test_tx_complete++ ;
 
 	spin_lock(&dev->req_lock);
 	list_add_tail(&req->list, &dev->tx_reqs);
@@ -751,11 +730,6 @@ static netdev_tx_t eth_start_xmit(struct sk_buff *skb,
 	bool			multi_pkt_xfer = false;
 	uint32_t		max_size = 0;
 
-	//ALPS00542120
-	static unsigned int okCnt = 0, busyCnt = 0;
-	static int firstShot = 1, diffSec;
-	static struct timeval tv_last, tv_cur;
-
 	spin_lock_irqsave(&dev->lock, flags);
 	if (dev->port_usb) {
 		in = dev->port_usb->in_ep;
@@ -783,8 +757,6 @@ static netdev_tx_t eth_start_xmit(struct sk_buff *skb,
 		}
 	}
 	spin_unlock_irqrestore(&dev->req_lock, flags);
-
-	rndis_test_tx_net_in ++ ;
 
 	/* apply outgoing CDC or RNDIS filters */
 	if (!is_promisc(cdc_filter)) {
@@ -816,32 +788,9 @@ static netdev_tx_t eth_start_xmit(struct sk_buff *skb,
 	 * network stack decided to xmit but before we got the spinlock.
 	 */
 	if (list_empty(&dev->tx_reqs)) {
-
-		busyCnt++;
-		do_gettimeofday(&tv_cur);
-
-		if(firstShot)
-		{
-			tv_last = tv_cur;
-			firstShot = 0;
-			printk(KERN_ERR "%s, NETDEV_TX_BUSY returned at firstShot , okCnt : %u, busyCnt : %u\n", __func__, okCnt, busyCnt);
-		}
-		else
-		{
-			diffSec = tv_cur.tv_sec - tv_last.tv_sec;
-			if(diffSec >=2 )
-			{
-				tv_last = tv_cur;
-				printk(KERN_ERR "%s, NETDEV_TX_BUSY returned, okCnt : %u, busyCnt : %u\n", __func__, okCnt, busyCnt);
-			}
-		}
-
 		spin_unlock_irqrestore(&dev->req_lock, flags);
-
-		rndis_test_tx_busy ++ ;
 		return NETDEV_TX_BUSY;
 	}
-	okCnt++;
 
 	req = container_of(dev->tx_reqs.next, struct usb_request, list);
 	list_del(&req->list);
@@ -954,12 +903,11 @@ static netdev_tx_t eth_start_xmit(struct sk_buff *skb,
 	} else {
 		req->no_interrupt = 0;
 	}
-	rndis_test_tx_usb_out ++ ;
+
 	retval = usb_ep_queue(in, req, GFP_ATOMIC);
 	switch (retval) {
 	default:
 		DBG(dev, "tx queue err %d\n", retval);
-		pr_debug("[XLOG_INFO][UTHER]eth_start_xmit : tx queue err %d\n", retval);
 		break;
 	case 0:
 		net->trans_start = jiffies;
@@ -987,7 +935,6 @@ success:
 static void eth_start(struct eth_dev *dev, gfp_t gfp_flags)
 {
 	DBG(dev, "%s\n", __func__);
-	pr_debug("[XLOG_INFO][UTHER]%s\n", __func__);
 
 	/* fill the rx queue */
 	rx_fill(dev, gfp_flags);
@@ -1003,7 +950,6 @@ static int eth_open(struct net_device *net)
 	struct gether	*link;
 
 	DBG(dev, "%s\n", __func__);
-	pr_debug("[XLOG_INFO][UTHER]%s\n", __func__);
 
 	if (netif_carrier_ok(dev->net))
 		eth_start(dev, GFP_KERNEL);
@@ -1023,7 +969,6 @@ static int eth_stop(struct net_device *net)
 	unsigned long	flags;
 
 	VDBG(dev, "%s\n", __func__);
-	pr_debug("[XLOG_INFO][UTHER]%s\n", __func__);
 
 	netif_stop_queue(net);
 
@@ -1250,8 +1195,6 @@ struct net_device *gether_connect(struct gether *link)
 		goto fail;
 	}
 
-	pr_debug("[XLOG_INFO][UTHER]%s\n", __func__);
-
 	link->in_ep->driver_data = dev;
 	result = usb_ep_enable(link->in_ep);
 	if (result != 0) {
@@ -1344,17 +1287,6 @@ void gether_disconnect(struct gether *link)
 		return;
 
 	DBG(dev, "%s\n", __func__);
-	pr_debug("[XLOG_INFO][UTHER]%s\n", __func__);
-
-	rndis_test_rx_usb_in = 0 ;
-	rndis_test_rx_net_out = 0 ;
-	rndis_test_rx_nomem = 0 ;
-	rndis_test_rx_error = 0 ;
-
-	rndis_test_tx_net_in = 0 ;
-	rndis_test_tx_busy = 0 ;
-	rndis_test_tx_usb_out = 0 ;
-	rndis_test_tx_complete = 0 ;
 
 	netif_stop_queue(dev->net);
 	netif_carrier_off(dev->net);

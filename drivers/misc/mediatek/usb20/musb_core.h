@@ -94,7 +94,6 @@ extern int musb_removed;
 
 extern struct usb_ep *ep_in;
 extern struct usb_ep *ep_out;
-extern int bitdebug_enabled;
 extern unsigned bitdebug_writeCnt;
 extern unsigned bitdebug_readCnt;
 
