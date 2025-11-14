@@ -141,6 +141,16 @@ config USB_AT91
 	   dynamically linked module called "at91_udc" and force all
 	   gadget drivers to also be dynamically linked.
 
+config USB_LPC32XX
+	tristate "LPC32XX USB Peripheral Controller"
+	depends on ARCH_LPC32XX && I2C
+	select USB_ISP1301
+	help
+	   This option selects the USB device controller in the LPC32xx SoC.
+
+	   Say "y" to link the driver statically, or "m" to build a
+	   dynamically linked module called "lpc32xx_udc" and force all
+	   gadget drivers to also be dynamically linked.
 
 config USB_ATMEL_USBA
 	tristate "Atmel USBA"
@@ -181,6 +191,20 @@ config USB_FUSB300
 	help
 	   Faraday usb device controller FUSB300 driver
 
+config USB_OMAP
+	tristate "OMAP USB Device Controller"
+	depends on ARCH_OMAP1
+	depends on ISP1301_OMAP || !(MACH_OMAP_H2 || MACH_OMAP_H3)
+	help
+	   Many Texas Instruments OMAP processors have flexible full
+	   speed USB device controllers, with support for up to 30
+	   endpoints (plus endpoint zero).  This driver supports the
+	   controller in the OMAP 1611, and should work with controllers
+	   in other OMAP processors too, given minor tweaks.
+
+	   Say "y" to link the driver statically, or "m" to build a
+	   dynamically linked module called "omap_udc" and force all
+	   gadget drivers to also be dynamically linked.
 
 config USB_PXA25X
 	tristate "PXA 25x or IXP 4xx"
