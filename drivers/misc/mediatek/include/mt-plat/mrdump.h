@@ -165,15 +165,6 @@ typedef struct mrdump_rsvmem_block {
 #define MRDUMP_MINI_BUF_PADDR 0
 #endif
 
-#if defined(CONFIG_MTK_AEE_MRDUMP)
-void mrdump_reserve_memory(void);
-
-void __mrdump_create_oops_dump(AEE_REBOOT_MODE reboot_mode, struct pt_regs *regs, const char *msg,
-			       ...);
-
-void aee_kdump_reboot(AEE_REBOOT_MODE, const char *msg, ...);
-
-#else
 static inline void mrdump_reserve_memory(void)
 {
 }
@@ -186,8 +177,6 @@ static inline void __mrdump_create_oops_dump(AEE_REBOOT_MODE reboot_mode, struct
 static inline void aee_kdump_reboot(AEE_REBOOT_MODE reboot_mode, const char *msg, ...)
 {
 }
-
-#endif
 
 void __init __weak mrdump_rsvmem(void);
 
