@@ -2989,15 +2989,17 @@ static unsigned int _mt_cpufreq_calc_new_opp_idx(struct mt_cpu_dvfs *p, int new_
 		}
 	}
 
-	/* HEVC */
-	if (p->limited_freq_by_hevc) {
-		idx = _mt_cpufreq_get_idx_by_freq(p, p->limited_freq_by_hevc, CPUFREQ_RELATION_L);
+/* HEVC */
+    /*
+    if (p->limited_freq_by_hevc) {
+        idx = _mt_cpufreq_get_idx_by_freq(p, p->limited_freq_by_hevc, CPUFREQ_RELATION_L);
 
-		if (idx != -1 && new_opp_idx > idx) {
-			new_opp_idx = idx;
-			cpufreq_ver("%s(): hevc limited freq, idx = %d\n", __func__, new_opp_idx);
-		}
-	}
+        if (idx != -1 && new_opp_idx > idx) {
+            new_opp_idx = idx;
+            cpufreq_ver("%s(): hevc limited freq, idx = %d\n", __func__, new_opp_idx);
+        }
+    }
+    */
 
 	/* search power limited freq */
 	idx = _mt_cpufreq_power_limited_verify(p, new_opp_idx);
