@@ -1608,8 +1608,16 @@ static void createWirelessDevice(void)
 	prWiphy->cipher_suites = (const u32 *)mtk_cipher_suites;
 	prWiphy->n_cipher_suites = ARRAY_SIZE(mtk_cipher_suites);
 	prWiphy->flags = WIPHY_FLAG_SUPPORTS_FW_ROAM
-			| WIPHY_FLAG_HAS_REMAIN_ON_CHANNEL
-			| WIPHY_FLAG_SUPPORTS_SCHED_SCAN;
+	| WIPHY_FLAG_HAS_REMAIN_ON_CHANNEL
+	| WIPHY_FLAG_SUPPORTS_SCHED_SCAN;
+
+	/*
+	 * Advertise SAE userspace support to nl80211/wpa_supplicant.
+	 * This is required so wpa_supplicant does not filter SAE out
+	 * from the AKM selection.
+	 */
+	prWiphy->features |= NL80211_FEATURE_SAE;
+
 	prWiphy->regulatory_flags = REGULATORY_CUSTOM_REG;
 #if (CFG_SUPPORT_TDLS == 1)
 	TDLSEX_WIPHY_FLAGS_INIT(prWiphy->flags);
