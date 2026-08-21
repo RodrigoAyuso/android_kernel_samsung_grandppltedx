@@ -874,6 +874,9 @@ int mtk_cfg80211_auth(struct wiphy *wiphy,
 	size_t u4AuthDataOffset;
 	size_t u4FrameLen;
 	UINT_64 u8Cookie = 0;
+	UINT_64 u8RocCookie = 0;
+	UINT_8 ucTargetChannel;
+	UINT_32 u4Wait;
 	INT_32 i4Ret;
 
 	if (!wiphy || !ndev || !req || !req->bss)
@@ -973,6 +976,81 @@ int mtk_cfg80211_auth(struct wiphy *wiphy,
 		prStaRec->ucIndex,
 		prStaRec->ucStaState,
 		prStaRec->aucMacAddr);
+
+	/*
+	 * SAE userspace SME bypasses the normal AIS JOIN channel
+	 * acquisition. Request the target AP channel before sending
+	 * the Authentication frame.
+	 */
+	ucTargetChannel =
+	nicFreq2ChannelNum(req->bss->channel->center_freq * 1000);
+
+	DBGLOG(REQ, INFO,
+		   "SAE: target freq=%u MHz channel=%u AIS state=%u granted=%u\n",
+		req->bss->channel->center_freq,
+		ucTargetChannel,
+		prAisFsmInfo->eCurrentState,
+		prAisFsmInfo->fgIsChannelGranted);
+
+	/*
+	 * If a previous SAE transaction already owns the correct
+	 * channel, reuse it. This is important for SAE Confirm.
+	 */
+	if (!(prAisFsmInfo->fgIsChannelGranted &&
+		prAisFsmInfo->eCurrentState == AIS_STATE_REMAIN_ON_CHANNEL &&
+		prAisFsmInfo->rChReqInfo.ucChannelNum == ucTargetChannel)) {
+
+		i4Ret = mtk_cfg80211_remain_on_channel(
+			wiphy,
+			wdev,
+			req->bss->channel,
+			2000,
+			&u8RocCookie);
+
+		if (i4Ret) {
+			DBGLOG(REQ, ERROR,
+				   "SAE: remain_on_channel request failed=%d\n",
+		  i4Ret);
+			return i4Ret;
+		}
+
+		DBGLOG(REQ, INFO,
+			   "SAE: waiting for channel grant ch=%u cookie=%llu\n",
+		 ucTargetChannel,
+		 u8RocCookie);
+
+		/*
+		 * The actual channel request is asynchronous and handled
+		 * by the MTK tx_thread/CNM. Give it up to 500 ms.
+		 */
+		for (u4Wait = 0; u4Wait < 50; u4Wait++) {
+			if (prAisFsmInfo->fgIsChannelGranted &&
+				prAisFsmInfo->eCurrentState ==
+				AIS_STATE_REMAIN_ON_CHANNEL &&
+				prAisFsmInfo->rChReqInfo.ucChannelNum ==
+				ucTargetChannel)
+				break;
+
+			kalMsleep(10);
+		}
+
+		if (u4Wait == 50) {
+			DBGLOG(REQ, ERROR,
+				   "SAE: channel grant timeout ch=%u state=%u requested=%u granted=%u\n",
+		  ucTargetChannel,
+		  prAisFsmInfo->eCurrentState,
+		  prAisFsmInfo->fgIsChannelRequested,
+		  prAisFsmInfo->fgIsChannelGranted);
+
+			return -ETIMEDOUT;
+		}
+		}
+
+		DBGLOG(REQ, INFO,
+			   "SAE: channel ready ch=%u state=%u granted=%u\n",
+			   prAisFsmInfo->rChReqInfo.ucChannelNum,
+			   prAisFsmInfo->eCurrentState,
+			   prAisFsmInfo->fgIsChannelGranted);
 
 	/*
 	 * Copy sae_data directly starting at auth_transaction:
