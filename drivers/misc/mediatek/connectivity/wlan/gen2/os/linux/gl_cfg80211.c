@@ -862,6 +862,14 @@ int mtk_cfg80211_auth(struct wiphy *wiphy,
 	struct wireless_dev *wdev;
 	struct ieee80211_mgmt *mgmt;
 	struct cfg80211_mgmt_tx_params params;
+
+	P_GLUE_INFO_T prGlueInfo;
+	P_ADAPTER_T prAdapter;
+	P_BSS_DESC_T prBssDesc;
+	P_STA_RECORD_T prStaRec;
+	P_AIS_FSM_INFO_T prAisFsmInfo;
+	UINT_8 aucBssid[MAC_ADDR_LEN];
+
 	PUINT_8 pucFrame;
 	size_t u4AuthDataOffset;
 	size_t u4FrameLen;
@@ -891,6 +899,80 @@ int mtk_cfg80211_auth(struct wiphy *wiphy,
 	wdev = ndev->ieee80211_ptr;
 	if (!wdev)
 		return -EINVAL;
+
+	/*
+	 * Userspace SME bypasses the normal MediaTek AIS JOIN path.
+	 * Prepare the target AP STA record before transmitting SAE.
+	 */
+	prGlueInfo = (P_GLUE_INFO_T) wiphy_priv(wiphy);
+	if (!prGlueInfo || !prGlueInfo->prAdapter) {
+		DBGLOG(REQ, ERROR, "SAE: invalid glue/adapter\n");
+		return -EINVAL;
+	}
+
+	prAdapter = prGlueInfo->prAdapter;
+
+	kalMemCopy(aucBssid, req->bss->bssid, MAC_ADDR_LEN);
+
+	prBssDesc = scanSearchBssDescByBssid(prAdapter, aucBssid);
+	if (!prBssDesc) {
+		DBGLOG(REQ, ERROR,
+			   "SAE: no BSS descriptor for %pM\n",
+		 aucBssid);
+		return -ENOENT;
+	}
+
+	/*
+	 * Normally this is created by aisFsmStateInit_JOIN().
+	 * With cfg80211 userspace SME we have bypassed that path.
+	 */
+	prStaRec = cnmGetStaRecByAddress(prAdapter,
+									 NETWORK_TYPE_AIS_INDEX,
+								  aucBssid);
+
+	if (!prStaRec) {
+		prStaRec = bssCreateStaRecFromBssDesc(
+			prAdapter,
+			STA_TYPE_LEGACY_AP,
+			NETWORK_TYPE_AIS_INDEX,
+			prBssDesc);
+
+		if (!prStaRec) {
+			DBGLOG(REQ, ERROR,
+				   "SAE: failed to create STA record for %pM\n",
+		  aucBssid);
+			return -ENOMEM;
+		}
+
+		DBGLOG(REQ, INFO,
+			   "SAE: created STA record idx=%u for %pM\n",
+		 prStaRec->ucIndex,
+		 aucBssid);
+	} else {
+		DBGLOG(REQ, INFO,
+			   "SAE: reusing STA record idx=%u state=%u for %pM\n",
+		 prStaRec->ucIndex,
+		 prStaRec->ucStaState,
+		 aucBssid);
+	}
+
+	/*
+	 * This is what the normal AIS JOIN path does before SAA.
+	 * Do not downgrade a STA record that has already advanced.
+	 */
+	if (prStaRec->ucStaState == STA_STATE_1)
+		cnmStaRecChangeState(prAdapter,
+							 prStaRec,
+					   STA_STATE_1);
+
+		prAisFsmInfo = &(prAdapter->rWifiVar.rAisFsmInfo);
+	prAisFsmInfo->prTargetStaRec = prStaRec;
+
+	DBGLOG(REQ, INFO,
+		   "SAE: STA ready idx=%u state=%u BSSID=%pM\n",
+		prStaRec->ucIndex,
+		prStaRec->ucStaState,
+		prStaRec->aucMacAddr);
 
 	/*
 	 * Copy sae_data directly starting at auth_transaction:
