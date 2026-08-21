@@ -5245,6 +5245,14 @@ VOID aisFsmRunEventMgmtFrameTx(IN P_ADAPTER_T prAdapter, IN P_MSG_HDR_T prMsgHdr
 			break;
 		prMgmtTxMsg = (P_MSG_MGMT_TX_REQUEST_T) prMsgHdr;
 
+		DBGLOG(AIS, INFO,
+			   "SAE/MGMT mailbox cookie=%llu msdu=%p len=%u ais=%u\n",
+		 (unsigned long long) prMgmtTxMsg->u8Cookie,
+			   prMgmtTxMsg->prMgmtMsduInfo,
+		 prMgmtTxMsg->prMgmtMsduInfo ?
+		 prMgmtTxMsg->prMgmtMsduInfo->u2FrameLength : 0,
+		 prAisFsmInfo->eCurrentState);
+
 		aisFuncTxMgmtFrame(prAdapter,
 				   &prAisFsmInfo->rMgmtTxInfo, prMgmtTxMsg->prMgmtMsduInfo, prMgmtTxMsg->u8Cookie);
 
@@ -5497,6 +5505,20 @@ aisFuncTxMgmtFrame(IN P_ADAPTER_T prAdapter,
 		prMgmtTxMsdu->pfTxDoneHandler = aisFsmRunEventMgmtFrameTxDone;
 		prMgmtTxMsdu->fgIsBasicRate = TRUE;
 		DBGLOG(AIS, TRACE, "Mgmt seq NO. %d .\n", prMgmtTxMsdu->ucTxSeqNum);
+
+		DBGLOG(AIS, INFO,
+			   "SAE/MGMT enqueue fc=0x%04x sta=%u staState=%u inUse=%u ps=%u active=%u absent=%u ais=%u seq=%u len=%u\n",
+		 prWlanHdr->u2FrameCtrl,
+		 prMgmtTxMsdu->ucStaRecIndex,
+		 prStaRec ? prStaRec->ucStaState : 0xff,
+		 prStaRec ? prStaRec->fgIsInUse : 0,
+		 prStaRec ? prStaRec->fgIsInPS : 0,
+		 IS_BSS_ACTIVE(
+			 &prAdapter->rWifiVar.arBssInfo[NETWORK_TYPE_AIS_INDEX]),
+		 prAdapter->rWifiVar.arBssInfo[NETWORK_TYPE_AIS_INDEX].fgIsNetAbsent,
+		 prAdapter->rWifiVar.rAisFsmInfo.eCurrentState,
+		 prMgmtTxMsdu->ucTxSeqNum,
+		 prMgmtTxMsdu->u2FrameLength);
 
 		nicTxEnqueueMsdu(prAdapter, prMgmtTxMsdu);
 

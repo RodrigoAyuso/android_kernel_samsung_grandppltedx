@@ -1920,8 +1920,18 @@ WLAN_STATUS wlanProcessCommandQueue(IN P_ADAPTER_T prAdapter, IN P_QUE_T prCmdQu
 			prMsduInfo = (P_MSDU_INFO_T) (prCmdInfo->prPacket);
 
 			eFrameAction = qmGetFrameAction(prAdapter,
-							prMsduInfo->ucNetworkType,
-							prMsduInfo->ucStaRecIndex, prMsduInfo, FRAME_TYPE_MMPDU);
+											prMsduInfo->ucNetworkType,
+								   prMsduInfo->ucStaRecIndex,
+								   prMsduInfo,
+								   FRAME_TYPE_MMPDU);
+
+			DBGLOG(TX, INFO,
+				   "SAE/MGMT cmd action=%u net=%u sta=%u seq=%u tc4=%u\n",
+		  eFrameAction,
+		  prMsduInfo->ucNetworkType,
+		  prMsduInfo->ucStaRecIndex,
+		  prMsduInfo->ucTxSeqNum,
+		  nicTxGetResource(prAdapter, TC4_INDEX));
 			break;
 
 		default:
@@ -1940,9 +1950,20 @@ WLAN_STATUS wlanProcessCommandQueue(IN P_ADAPTER_T prAdapter, IN P_QUE_T prCmdQu
 				DBGLOG(TX, INFO, "Queue Security frame seqNo=%d\n",
 					prCmdInfo->ucCmdSeqNum);
 			QUEUE_INSERT_TAIL(prMergeCmdQue, prQueueEntry);
-		} else if (eFrameAction == FRAME_ACTION_TX_PKT) {
-			/* 4 <4> Send the command */
-			rStatus = wlanSendCommand(prAdapter, prCmdInfo);
+		}  else if (eFrameAction == FRAME_ACTION_TX_PKT) {
+			if (prCmdInfo->eCmdType == COMMAND_TYPE_MANAGEMENT_FRAME)
+				DBGLOG(TX, INFO,
+					   "SAE/MGMT before wlanSendCommand sta=%u net=%u\n",
+		   prCmdInfo->ucStaRecIndex,
+		   prCmdInfo->eNetworkType);
+
+				/* 4 <4> Send the command */
+				rStatus = wlanSendCommand(prAdapter, prCmdInfo);
+
+				if (prCmdInfo->eCmdType == COMMAND_TYPE_MANAGEMENT_FRAME)
+					DBGLOG(TX, INFO,
+						   "SAE/MGMT after wlanSendCommand status=%u\n",
+			rStatus);
 
 			if (rStatus == WLAN_STATUS_RESOURCES) {
 				QUEUE_INSERT_TAIL(prMergeCmdQue, prQueueEntry);
