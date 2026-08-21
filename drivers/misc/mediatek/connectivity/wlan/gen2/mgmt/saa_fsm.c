@@ -976,30 +976,10 @@ VOID saaFsmRunEventRxRespTimeOut(IN P_ADAPTER_T prAdapter, IN P_STA_RECORD_T prS
 VOID saaFsmRunEventRxAuth(IN P_ADAPTER_T prAdapter, IN P_SW_RFB_T prSwRfb)
 {
 	P_STA_RECORD_T prStaRec;
-	P_WLAN_AUTH_FRAME_T prAuthFrame;
 	UINT_16 u2StatusCode;
 	ENUM_AA_STATE_T eNextState;
 
 	ASSERT(prSwRfb);
-	if (!prSwRfb || !prSwRfb->pvHeader)
-		return;
-
-	prAuthFrame = (P_WLAN_AUTH_FRAME_T) prSwRfb->pvHeader;
-
-	/* SAE is handled by wpa_supplicant through cfg80211 userspace SME. */
-	if (prSwRfb->u2PacketLen >= offsetof(WLAN_AUTH_FRAME_T, aucInfoElem) &&
-	    prAuthFrame->u2AuthAlgNum == AUTH_ALGORITHM_NUM_SAE) {
-		DBGLOG(SAA, INFO,
-		       "SAE RX auth from %pM trans=%u status=%u len=%u\n",
-		       prAuthFrame->aucSrcAddr,
-		       prAuthFrame->u2AuthTransSeqNo,
-		       prAuthFrame->u2StatusCode,
-		       prSwRfb->u2PacketLen);
-
-		kalIndicateRxMlmeFrame(prAdapter->prGlueInfo, prSwRfb);
-		return;
-	}
-
 	prStaRec = cnmGetStaRecByIndex(prAdapter, prSwRfb->ucStaRecIdx);
 
 	/* We should have the corresponding Sta Record. */

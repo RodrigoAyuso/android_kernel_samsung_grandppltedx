@@ -890,7 +890,6 @@ static struct cfg80211_ops mtk_wlan_ops = {
 	.add_station = mtk_cfg80211_add_station,
 	.del_station = mtk_cfg80211_del_station,
 	.scan = mtk_cfg80211_scan,
-	.auth = mtk_cfg80211_auth,
 	.connect = mtk_cfg80211_connect,
 	.disconnect = mtk_cfg80211_disconnect,
 	.join_ibss = mtk_cfg80211_join_ibss,
