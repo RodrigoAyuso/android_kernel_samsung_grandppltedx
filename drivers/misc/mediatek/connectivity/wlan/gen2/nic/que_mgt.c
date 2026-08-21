@@ -4567,9 +4567,15 @@ qmGetFrameAction(IN P_ADAPTER_T prAdapter,
 		if (eFrameType == FRAME_TYPE_MMPDU) {
 			prWlanFrame = (P_WLAN_MAC_HEADER_T) prMsduInfo->prPacket;
 			u2TxFrameCtrl = (prWlanFrame->u2FrameCtrl) & MASK_FRAME_TYPE;	/* Optimized for ARM */
+			/*
+			 * Userspace SME authentication (e.g. SAE) must be allowed before
+			 * the AIS BSS is marked active. Authentication is what establishes
+			 * the pre-association state in the first place.
+			 */
 			if (((u2TxFrameCtrl == MAC_FRAME_DEAUTH)
 				&& (prMsduInfo->pfTxDoneHandler == NULL))
-				|| (u2TxFrameCtrl == MAC_FRAME_ACTION))		/* whsu */
+				|| (u2TxFrameCtrl == MAC_FRAME_ACTION)
+				|| (u2TxFrameCtrl == MAC_FRAME_AUTH))
 				return FRAME_ACTION_TX_PKT;
 		}
 
