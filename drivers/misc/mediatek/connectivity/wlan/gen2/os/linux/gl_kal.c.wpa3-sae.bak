@@ -4199,34 +4199,6 @@ VOID kalIndicateRxMgmtFrame(IN P_GLUE_INFO_T prGlueInfo, IN P_SW_RFB_T prSwRfb)
 
 }				/* kalIndicateRxMgmtFrame */
 
-VOID kalIndicateRxMlmeFrame(IN P_GLUE_INFO_T prGlueInfo,
-			    IN P_SW_RFB_T prSwRfb)
-{
-	struct wireless_dev *wdev;
-
-	if (!prGlueInfo || !prSwRfb || !prGlueInfo->prDevHandler)
-		return;
-
-	wdev = prGlueInfo->prDevHandler->ieee80211_ptr;
-	if (!wdev)
-		return;
-
-	DBGLOG(AIS, INFO, "RX MLME frame fc=0x%x len=%u\n",
-	       ((P_WLAN_MAC_HEADER_T) prSwRfb->pvHeader)->u2FrameCtrl,
-	       prSwRfb->u2PacketLen);
-
-	/*
-	 * cfg80211_rx_mlme_mgmt() may sleep and requires the wdev mutex.
-	 * RX processing here runs in the driver's RX thread context.
-	 */
-	mutex_lock(&wdev->mtx);
-	cfg80211_rx_mlme_mgmt(prGlueInfo->prDevHandler,
-			      prSwRfb->pvHeader,
-			      prSwRfb->u2PacketLen);
-	mutex_unlock(&wdev->mtx);
-}
-
-
 #if CFG_SUPPORT_AGPS_ASSIST
 BOOLEAN kalIndicateAgpsNotify(P_ADAPTER_T prAdapter, UINT_8 cmd, PUINT_8 data, UINT_16 dataLen)
 {
