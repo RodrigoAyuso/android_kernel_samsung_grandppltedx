@@ -1417,65 +1417,6 @@ VOID rsnGenerateRSNIE(IN P_ADAPTER_T prAdapter, IN P_MSDU_INFO_T prMsduInfo)
 	/* Todo:: network id */
 	eNetworkId = (ENUM_NETWORK_TYPE_INDEX_T) prMsduInfo->ucNetworkType;
 
-	/*
-	 * SAE authentication and RSN negotiation are owned by the cfg80211
-	 * userspace SME. Reuse the RSN IE supplied by wpa_supplicant
-	 * verbatim instead of reconstructing one from the legacy MTK
-	 * security state.
-	 *
-	 * This keeps RSN capabilities, PMKID and Group Management Cipher
-	 * Suite consistent with the context used by wpa_supplicant for
-	 * EAPOL-Key message 2.
-	 */
-	if (eNetworkId == NETWORK_TYPE_AIS_INDEX &&
-	    prAdapter->rWifiVar.rConnSettings.rRsnInfo.
-		    au4AuthKeyMgtSuite[0] == WLAN_AKM_SUITE_SAE &&
-	    prAdapter->prGlueInfo &&
-	    prAdapter->prGlueInfo->u4ReqIeLength > 0) {
-		PUINT_8 pucUserIe;
-		UINT_32 u4UserIeLen;
-		UINT_32 u4Offset;
-		UINT_32 u4IeLen;
-
-		pucUserIe = prAdapter->prGlueInfo->aucReqIe;
-		u4UserIeLen = prAdapter->prGlueInfo->u4ReqIeLength;
-		u4Offset = 0;
-
-		while (u4Offset + ELEM_HDR_LEN <= u4UserIeLen) {
-			u4IeLen = ELEM_HDR_LEN +
-				pucUserIe[u4Offset + 1];
-
-			if (u4Offset + u4IeLen > u4UserIeLen) {
-				DBGLOG(RSN, WARN,
-				       "SAE: malformed userspace IE list offset=%u ie_len=%u total=%u\n",
-				       u4Offset,
-				       u4IeLen,
-				       u4UserIeLen);
-				break;
-			}
-
-			if (pucUserIe[u4Offset] == ELEM_ID_RSN) {
-				kalMemCopy(pucBuffer,
-					   &pucUserIe[u4Offset],
-					   u4IeLen);
-
-				prMsduInfo->u2FrameLength +=
-					(UINT_16)u4IeLen;
-
-				DBGLOG(RSN, INFO,
-				       "SAE: reuse userspace RSN IE len=%u\n",
-				       u4IeLen);
-
-				return;
-			}
-
-			u4Offset += u4IeLen;
-		}
-
-		DBGLOG(RSN, WARN,
-		       "SAE: userspace association IEs contain no RSN IE\n");
-	}
-
 #if CFG_SUPPORT_802_11R
 	/* for Fast Bss Transition,  we reuse the RSN Element composed in userspace */
 	if ((prAdapter->rWifiVar.rConnSettings.eAuthMode == AUTH_MODE_WPA2_FT ||

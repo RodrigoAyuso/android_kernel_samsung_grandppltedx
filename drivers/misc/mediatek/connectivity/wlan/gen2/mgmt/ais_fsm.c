@@ -1452,42 +1452,95 @@ VOID aisFsmStateInit_JOIN(IN P_ADAPTER_T prAdapter, P_BSS_DESC_T prBssDesc)
 	/* 4 <4> Use an appropriate Authentication Algorithm Number among the ucAvailableAuthTypes */
 	if (prAisFsmInfo->ucAvailableAuthTypes & (UINT_8) AUTH_TYPE_OPEN_SYSTEM) {
 
-		DBGLOG(AIS, LOUD, "JOIN INIT: Try to do Authentication with AuthType == OPEN_SYSTEM.\n");
-		prAisFsmInfo->ucAvailableAuthTypes &= ~(UINT_8) AUTH_TYPE_OPEN_SYSTEM;
+		DBGLOG(AIS, LOUD,
+			   "JOIN INIT: Try to do Authentication with AuthType == OPEN_SYSTEM.\n");
 
-		prStaRec->ucAuthAlgNum = (UINT_8) AUTH_ALGORITHM_NUM_OPEN_SYSTEM;
-	} else if (prAisFsmInfo->ucAvailableAuthTypes & (UINT_8) AUTH_TYPE_SHARED_KEY) {
+		prAisFsmInfo->ucAvailableAuthTypes &=
+		~(UINT_8) AUTH_TYPE_OPEN_SYSTEM;
 
-		DBGLOG(AIS, LOUD, "JOIN INIT: Try to do Authentication with AuthType == SHARED_KEY.\n");
+		prStaRec->ucAuthAlgNum =
+		(UINT_8) AUTH_ALGORITHM_NUM_OPEN_SYSTEM;
 
-		prAisFsmInfo->ucAvailableAuthTypes &= ~(UINT_8) AUTH_TYPE_SHARED_KEY;
+	} else if (prAisFsmInfo->ucAvailableAuthTypes &
+		(UINT_8) AUTH_TYPE_SHARED_KEY) {
 
-		prStaRec->ucAuthAlgNum = (UINT_8) AUTH_ALGORITHM_NUM_SHARED_KEY;
-	} else if (prAisFsmInfo->ucAvailableAuthTypes & (UINT_8) AUTH_TYPE_FAST_BSS_TRANSITION) {
+		DBGLOG(AIS, LOUD,
+			   "JOIN INIT: Try to do Authentication with AuthType == SHARED_KEY.\n");
 
-		DBGLOG(AIS, LOUD, "JOIN INIT: Try to do Authentication with AuthType == FAST_BSS_TRANSITION.\n");
+		prAisFsmInfo->ucAvailableAuthTypes &=
+		~(UINT_8) AUTH_TYPE_SHARED_KEY;
 
-		prAisFsmInfo->ucAvailableAuthTypes &= ~(UINT_8) AUTH_TYPE_FAST_BSS_TRANSITION;
+	prStaRec->ucAuthAlgNum =
+	(UINT_8) AUTH_ALGORITHM_NUM_SHARED_KEY;
 
-		prStaRec->ucAuthAlgNum = (UINT_8) AUTH_ALGORITHM_NUM_FAST_BSS_TRANSITION;
-	} else {
-		ASSERT(0);
-	}
+		} else if (prAisFsmInfo->ucAvailableAuthTypes &
+			(UINT_8) AUTH_TYPE_FAST_BSS_TRANSITION) {
 
-	/* 4 <5> Overwrite Connection Setting for eConnectionPolicy == ANY (Used by Assoc Req) */
-	if (prBssDesc->ucSSIDLen)
-		COPY_SSID(prConnSettings->aucSSID, prConnSettings->ucSSIDLen, prBssDesc->aucSSID, prBssDesc->ucSSIDLen);
-	/* 4 <6> Send a Msg to trigger SAA to start JOIN process. */
-	prJoinReqMsg = (P_MSG_JOIN_REQ_T) cnmMemAlloc(prAdapter, RAM_TYPE_MSG, sizeof(MSG_JOIN_REQ_T));
-	if (!prJoinReqMsg) {
+			DBGLOG(AIS, LOUD,
+				   "JOIN INIT: Try to do Authentication with AuthType == FAST_BSS_TRANSITION.\n");
 
-		ASSERT(0);	/* Can't trigger SAA FSM */
-		return;
-	}
+			prAisFsmInfo->ucAvailableAuthTypes &=
+			~(UINT_8) AUTH_TYPE_FAST_BSS_TRANSITION;
 
-	prJoinReqMsg->rMsgHdr.eMsgId = MID_AIS_SAA_FSM_START;
-	prJoinReqMsg->ucSeqNum = ++prAisFsmInfo->ucSeqNumOfReqMsg;
-	prJoinReqMsg->prStaRec = prStaRec;
+		prStaRec->ucAuthAlgNum =
+		(UINT_8) AUTH_ALGORITHM_NUM_FAST_BSS_TRANSITION;
+
+			} else {
+				ASSERT(0);
+			}
+
+			/*
+			 * SAE authentication has already been completed by
+			 * wpa_supplicant through cfg80211 userspace SME.
+			 *
+			 * The legacy AIS/SAA JOIN path normally starts from
+			 * STA_STATE_1 and performs Open System Authentication.
+			 * For SAE this authentication must not be repeated.
+			 *
+			 * STA_STATE_2 means authenticated but not yet associated.
+			 * SAA will therefore start directly with Association.
+			 */
+			if (prAisBssInfo->eConnectionState ==
+				PARAM_MEDIA_STATE_DISCONNECTED &&
+				prConnSettings->rRsnInfo.au4AuthKeyMgtSuite[0] ==
+				WLAN_AKM_SUITE_SAE) {
+
+				DBGLOG(AIS, INFO,
+					   "SAE: userspace authentication complete, skip legacy auth for %pM state=%u\n",
+		   prStaRec->aucMacAddr,
+		   prStaRec->ucStaState);
+
+				cnmStaRecChangeState(prAdapter,
+									 prStaRec,
+						 STA_STATE_2);
+
+				DBGLOG(AIS, INFO,
+					   "SAE: STA moved to authenticated state=%u before association\n",
+		   prStaRec->ucStaState);
+				}
+
+				/* 4 <5> Overwrite Connection Setting for eConnectionPolicy == ANY (Used by Assoc Req) */
+				if (prBssDesc->ucSSIDLen)
+					COPY_SSID(prConnSettings->aucSSID,
+							  prConnSettings->ucSSIDLen,
+			   prBssDesc->aucSSID,
+			   prBssDesc->ucSSIDLen);
+
+					/* 4 <6> Send a Msg to trigger SAA to start JOIN process. */
+					prJoinReqMsg = (P_MSG_JOIN_REQ_T)
+					cnmMemAlloc(prAdapter,
+								RAM_TYPE_MSG,
+				 sizeof(MSG_JOIN_REQ_T));
+
+					if (!prJoinReqMsg) {
+						ASSERT(0);
+						return;
+					}
+
+					prJoinReqMsg->rMsgHdr.eMsgId = MID_AIS_SAA_FSM_START;
+					prJoinReqMsg->ucSeqNum =
+					++prAisFsmInfo->ucSeqNumOfReqMsg;
+					prJoinReqMsg->prStaRec = prStaRec;
 
 	if (1) {
 		int j;
