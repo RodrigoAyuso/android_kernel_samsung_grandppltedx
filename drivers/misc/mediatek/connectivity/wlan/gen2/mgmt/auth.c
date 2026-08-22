@@ -655,9 +655,12 @@ WLAN_STATUS authCheckTxAuthFrame(IN P_ADAPTER_T prAdapter, IN P_MSDU_INFO_T prMs
 * @retval WLAN_STATUS_SUCCESS   Always not retain authentication frames
 */
 /*----------------------------------------------------------------------------*/
-WLAN_STATUS authCheckRxAuthFrameTransSeq(IN P_ADAPTER_T prAdapter, IN P_SW_RFB_T prSwRfb)
+WLAN_STATUS
+authCheckRxAuthFrameTransSeq(IN P_ADAPTER_T prAdapter,
+							 IN P_SW_RFB_T prSwRfb)
 {
 	P_WLAN_AUTH_FRAME_T prAuthFrame;
+	UINT_16 u2RxAuthAlgNum;
 	UINT_16 u2RxTransactionSeqNum;
 
 	ASSERT(prSwRfb);
@@ -666,39 +669,61 @@ WLAN_STATUS authCheckRxAuthFrameTransSeq(IN P_ADAPTER_T prAdapter, IN P_SW_RFB_T
 	prAuthFrame = (P_WLAN_AUTH_FRAME_T) prSwRfb->pvHeader;
 
 	/* 4 <2> Parse the Header of Authentication Frame. */
-	if ((prSwRfb->u2PacketLen - prSwRfb->u2HeaderLen) < (AUTH_ALGORITHM_NUM_FIELD_LEN +
-							     AUTH_TRANSACTION_SEQENCE_NUM_FIELD_LEN +
-							     STATUS_CODE_FIELD_LEN)) {
+	if ((prSwRfb->u2PacketLen - prSwRfb->u2HeaderLen) <
+		(AUTH_ALGORITHM_NUM_FIELD_LEN +
+		AUTH_TRANSACTION_SEQENCE_NUM_FIELD_LEN +
+		STATUS_CODE_FIELD_LEN)) {
 		ASSERT(0);
-		return WLAN_STATUS_SUCCESS;
-	}
-	/* 4 <3> Parse the Fixed Fields of Authentication Frame Body. */
-	/* WLAN_GET_FIELD_16(&prAuthFrame->u2AuthTransSeqNo, &u2RxTransactionSeqNum); */
-	u2RxTransactionSeqNum = prAuthFrame->u2AuthTransSeqNo;	/* NOTE(Kevin): Optimized for ARM */
-
-	switch (u2RxTransactionSeqNum) {
-	case AUTH_TRANSACTION_SEQ_2:
-	case AUTH_TRANSACTION_SEQ_4:
-		saaFsmRunEventRxAuth(prAdapter, prSwRfb);
-		break;
-
-	case AUTH_TRANSACTION_SEQ_1:
-	case AUTH_TRANSACTION_SEQ_3:
-#if CFG_SUPPORT_AAA
-		aaaFsmRunEventRxAuth(prAdapter, prSwRfb);
-#endif /* CFG_SUPPORT_AAA */
-		break;
-
-	default:
-		DBGLOG(SAA, WARN, "Strange Authentication Packet: Auth Trans Seq No = %d, Error Status Code = %d\n",
-				   u2RxTransactionSeqNum, prAuthFrame->u2StatusCode);
-		break;
-	}
-
 	return WLAN_STATUS_SUCCESS;
+		}
 
-}				/* end of authCheckRxAuthFrameTransSeq() */
+		u2RxAuthAlgNum = prAuthFrame->u2AuthAlgNum;
+		u2RxTransactionSeqNum = prAuthFrame->u2AuthTransSeqNo;
 
+		/*
+		 * SAE authentication is handled by the cfg80211 userspace SME.
+		 *
+		 * The legacy MTK dispatcher routes transaction 1/3 to AAA and
+		 * transaction 2/4 to SAA. SAE uses transaction 1 for Commit on
+		 * both peers, so it must bypass that legacy dispatcher.
+		 */
+		if (u2RxAuthAlgNum == AUTH_ALGORITHM_NUM_SAE) {
+			DBGLOG(SAA, INFO,
+				   "SAE RX auth from %pM trans=%u status=%u len=%u\n",
+		  prAuthFrame->aucSrcAddr,
+		  u2RxTransactionSeqNum,
+		  prAuthFrame->u2StatusCode,
+		  prSwRfb->u2PacketLen);
+
+			kalIndicateRxMlmeFrame(prAdapter->prGlueInfo, prSwRfb);
+
+			return WLAN_STATUS_SUCCESS;
+		}
+
+		switch (u2RxTransactionSeqNum) {
+			case AUTH_TRANSACTION_SEQ_2:
+			case AUTH_TRANSACTION_SEQ_4:
+				saaFsmRunEventRxAuth(prAdapter, prSwRfb);
+				break;
+
+			case AUTH_TRANSACTION_SEQ_1:
+			case AUTH_TRANSACTION_SEQ_3:
+				#if CFG_SUPPORT_AAA
+				aaaFsmRunEventRxAuth(prAdapter, prSwRfb);
+				#endif
+				break;
+
+			default:
+				DBGLOG(SAA, WARN,
+					   "Strange Authentication Packet: Auth Trans Seq No = %d, Error Status Code = %d\n",
+		   u2RxTransactionSeqNum,
+		   prAuthFrame->u2StatusCode);
+				break;
+		}
+
+		return WLAN_STATUS_SUCCESS;
+
+} /* end of authCheckRxAuthFrameTransSeq() */
 /*----------------------------------------------------------------------------*/
 /*!
 * @brief This function will validate the incoming Authentication Frame and take
