@@ -771,6 +771,25 @@ BOOLEAN rsnSearchAKMSuite(IN P_ADAPTER_T prAdapter, IN UINT_32 u4AkmSuite, OUT P
 
 	ASSERT(pu4Index);
 
+	/*
+	 * SAE authentication itself is handled by wpa_supplicant.
+	 * The legacy MTK MIB predates SAE and therefore has no SAE
+	 * entry in dot11RSNAConfigAuthenticationSuitesTable.
+	 *
+	 * Accept SAE here only when cfg80211 userspace SME explicitly
+	 * selected SAE for the current connection.
+	 */
+	if (u4AkmSuite == RSN_AKM_SUITE_SAE &&
+		prAdapter->rWifiVar.rConnSettings.rRsnInfo.
+		au4AuthKeyMgtSuite[0] == WLAN_AKM_SUITE_SAE) {
+		*pu4Index = 0;
+
+	DBGLOG(RSN, INFO,
+		   "SAE: accept userspace-selected AKM suite\n");
+
+	return TRUE;
+		}
+
 	for (i = 0; i < MAX_NUM_SUPPORTED_AKM_SUITES; i++) {
 		prEntry = &prAdapter->rMib.dot11RSNAConfigAuthenticationSuitesTable[i];
 		if (prEntry->dot11RSNAConfigAuthenticationSuite == u4AkmSuite &&

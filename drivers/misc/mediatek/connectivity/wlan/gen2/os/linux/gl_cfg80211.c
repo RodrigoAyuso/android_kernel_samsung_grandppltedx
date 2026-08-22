@@ -2207,6 +2207,9 @@ int mtk_cfg80211_assoc(struct wiphy *wiphy,
 					   struct cfg80211_assoc_request *req)
 {
 	P_GLUE_INFO_T prGlueInfo = NULL;
+	P_CONNECTION_SETTINGS_T prConnSettings;
+	ENUM_PARAM_ENCRYPTION_STATUS_T eEncStatus;
+	ENUM_PARAM_AUTH_MODE_T eAuthMode;
 	#if CFG_SUPPORT_HOTSPOT_2_0
 	PUINT_8 prDesiredIE = NULL;
 	#endif
@@ -2227,48 +2230,168 @@ int mtk_cfg80211_assoc(struct wiphy *wiphy,
 		return -EINVAL;
 	}
 
+	prConnSettings =
+	&prGlueInfo->prAdapter->rWifiVar.rConnSettings;
+
 	DBGLOG(REQ, INFO,
-		   "userspace assoc BSSID=%pM freq=%u ie_len=%u\n",
+		   "userspace assoc BSSID=%pM freq=%u ie_len=%u akm_num=%d akm=0x%08x pair=0x%08x group=0x%08x mfp=%u\n",
 		req->bss->bssid,
 		req->bss->channel ?
 		req->bss->channel->center_freq : 0,
-		(UINT_32)req->ie_len);
+		(UINT_32)req->ie_len,
+		   req->crypto.n_akm_suites,
+		req->crypto.n_akm_suites ?
+		req->crypto.akm_suites[0] : 0,
+		req->crypto.n_ciphers_pairwise ?
+		req->crypto.ciphers_pairwise[0] : 0,
+		req->crypto.cipher_group,
+		req->use_mfp);
 
 	/*
-	 * Do NOT query wlanoidQueryBssid here.
+	 * cfg80211 userspace SME bypasses mtk_cfg80211_connect().
 	 *
-	 * With cfg80211 userspace SME, .assoc() is called after
-	 * authentication but before the station is associated.
-	 * Therefore the driver's current BSSID is expected to be empty.
+	 * For SAE, populate the legacy MediaTek security state that
+	 * rsnPerformPolicySelection() expects before wlanoidSetBssid()
+	 * starts the AIS BSS selection/JOIN path.
 	 */
+	if (req->crypto.n_akm_suites > 0 &&
+		req->crypto.akm_suites[0] == WLAN_AKM_SUITE_SAE) {
 
-	if (req->ie && req->ie_len > 0) {
-		#if CFG_SUPPORT_HOTSPOT_2_0
-		if (wextSrchDesiredHS20IE((PUINT_8)req->ie,
-			req->ie_len,
-			(PUINT_8 *)&prDesiredIE)) {
+		/*
+		 * WPA3-Personal on this device is supported with CCMP.
+		 */
+		if (req->crypto.n_ciphers_pairwise == 0 ||
+			req->crypto.ciphers_pairwise[0] !=
+			WLAN_CIPHER_SUITE_CCMP ||
+			req->crypto.cipher_group !=
+			WLAN_CIPHER_SUITE_CCMP) {
+
+			DBGLOG(REQ, ERROR,
+				   "SAE assoc: unsupported cipher pair=0x%08x group=0x%08x\n",
+		  req->crypto.n_ciphers_pairwise ?
+		  req->crypto.ciphers_pairwise[0] : 0,
+		  req->crypto.cipher_group);
+
+		return -EINVAL;
+			}
+
+			#if CFG_SUPPORT_802_11W
+			if (!req->use_mfp) {
+				DBGLOG(REQ, ERROR,
+					   "SAE assoc: MFP not enabled\n");
+				return -EINVAL;
+			}
+			#endif
+
+			/*
+			 * The old MTK driver predates SAE and has no AUTH_MODE_SAE.
+			 *
+			 * Use WPA2_PSK only as the legacy driver's internal RSN
+			 * policy mode. The actual AKM selector remains SAE
+			 * (00-0f-ac-08), and SAE authentication itself has already
+			 * been completed by wpa_supplicant.
+			 */
+			eAuthMode = AUTH_MODE_WPA2_PSK;
+
 			rStatus = kalIoctl(prGlueInfo,
-							   wlanoidSetHS20Info,
-					  prDesiredIE,
-					  IE_SIZE(prDesiredIE),
+							   wlanoidSetAuthMode,
+					  &eAuthMode,
+					  sizeof(eAuthMode),
 							   FALSE,
 					  FALSE,
-					  TRUE,
+					  FALSE,
 					  FALSE,
 					  &u4BufLen);
 
-			if (rStatus != WLAN_STATUS_SUCCESS)
-				DBGLOG(REQ, WARN,
-					   "userspace assoc: set HS20 IE failed=%x\n",
+			if (rStatus != WLAN_STATUS_SUCCESS) {
+				DBGLOG(REQ, ERROR,
+					   "SAE assoc: set auth mode failed=0x%x\n",
 		   rStatus);
+				return -EINVAL;
 			}
 
-			if (wextSrchDesiredInterworkingIE(
-				(PUINT_8)req->ie,
-											  req->ie_len,
-									 (PUINT_8 *)&prDesiredIE)) {
+			/*
+			 * Preserve the real cfg80211 suite selectors for the
+			 * MediaTek RSN policy selection.
+			 */
+			prConnSettings->rRsnInfo.
+			au4PairwiseKeyCipherSuite[0] =
+			WLAN_CIPHER_SUITE_CCMP;
+
+			prConnSettings->rRsnInfo.
+			u4GroupKeyCipherSuite =
+			WLAN_CIPHER_SUITE_CCMP;
+
+			prConnSettings->rRsnInfo.
+			au4AuthKeyMgtSuite[0] =
+			WLAN_AKM_SUITE_SAE;
+
+			prGlueInfo->rWpaInfo.u4WpaVersion =
+			IW_AUTH_WPA_VERSION_WPA2;
+
+			prGlueInfo->rWpaInfo.u4CipherPairwise =
+			IW_AUTH_CIPHER_CCMP;
+
+			prGlueInfo->rWpaInfo.u4CipherGroup =
+			IW_AUTH_CIPHER_CCMP;
+
+			prGlueInfo->rWpaInfo.fgPrivacyInvoke = TRUE;
+
+			#if CFG_SUPPORT_802_11W
+			prGlueInfo->rWpaInfo.u4Mfp =
+			IW_AUTH_MFP_REQUIRED;
+			#endif
+
+			/*
+			 * This also enables CCMP in the driver's internal cipher
+			 * table, which rsnPerformPolicySelection() checks.
+			 */
+			eEncStatus = ENUM_ENCRYPTION3_ENABLED;
+
+			rStatus = kalIoctl(prGlueInfo,
+							   wlanoidSetEncryptionStatus,
+					  &eEncStatus,
+					  sizeof(eEncStatus),
+							   FALSE,
+					  FALSE,
+					  FALSE,
+					  FALSE,
+					  &u4BufLen);
+
+			if (rStatus != WLAN_STATUS_SUCCESS) {
+				DBGLOG(REQ, ERROR,
+					   "SAE assoc: set encryption failed=0x%x\n",
+		   rStatus);
+				return -EINVAL;
+			}
+
+			DBGLOG(REQ, INFO,
+				   "SAE assoc security ready auth=%u enc=%u akm=0x%08x pair=0x%08x group=0x%08x mfp=%u\n",
+		  eAuthMode,
+		  eEncStatus,
+		  prConnSettings->rRsnInfo.
+		  au4AuthKeyMgtSuite[0],
+		  prConnSettings->rRsnInfo.
+		  au4PairwiseKeyCipherSuite[0],
+		  prConnSettings->rRsnInfo.
+		  u4GroupKeyCipherSuite,
+		  req->use_mfp);
+		}
+
+		/*
+		 * Do NOT query wlanoidQueryBssid here.
+		 *
+		 * With cfg80211 userspace SME, .assoc() is called after
+		 * authentication but before association.
+		 */
+
+		if (req->ie && req->ie_len > 0) {
+			#if CFG_SUPPORT_HOTSPOT_2_0
+			if (wextSrchDesiredHS20IE((PUINT_8)req->ie,
+				req->ie_len,
+				(PUINT_8 *)&prDesiredIE)) {
 				rStatus = kalIoctl(prGlueInfo,
-								   wlanoidSetInterworkingInfo,
+								   wlanoidSetHS20Info,
 					   prDesiredIE,
 					   IE_SIZE(prDesiredIE),
 								   FALSE,
@@ -2279,58 +2402,78 @@ int mtk_cfg80211_assoc(struct wiphy *wiphy,
 
 				if (rStatus != WLAN_STATUS_SUCCESS)
 					DBGLOG(REQ, WARN,
-						   "userspace assoc: set Interworking IE failed=%x\n",
+						   "userspace assoc: set HS20 IE failed=%x\n",
 			rStatus);
-									 }
+				}
 
-									 if (wextSrchDesiredRoamingConsortiumIE(
-										 (PUINT_8)req->ie,
-																			req->ie_len,
-												 (PUINT_8 *)&prDesiredIE)) {
-										 rStatus = kalIoctl(prGlueInfo,
-															wlanoidSetRoamingConsortiumIEInfo,
-							  prDesiredIE,
-							  IE_SIZE(prDesiredIE),
-															FALSE,
-							  FALSE,
-							  TRUE,
-							  FALSE,
-							  &u4BufLen);
+				if (wextSrchDesiredInterworkingIE(
+					(PUINT_8)req->ie,
+												  req->ie_len,
+									  (PUINT_8 *)&prDesiredIE)) {
+					rStatus = kalIoctl(prGlueInfo,
+									   wlanoidSetInterworkingInfo,
+						prDesiredIE,
+						IE_SIZE(prDesiredIE),
+									   FALSE,
+						FALSE,
+						TRUE,
+						FALSE,
+						&u4BufLen);
 
-										 if (rStatus != WLAN_STATUS_SUCCESS)
-											 DBGLOG(REQ, WARN,
-													"userspace assoc: set roaming consortium IE failed=%x\n",
-				   rStatus);
-												 }
-												 #endif
-	}
+					if (rStatus != WLAN_STATUS_SUCCESS)
+						DBGLOG(REQ, WARN,
+							   "userspace assoc: set Interworking IE failed=%x\n",
+			 rStatus);
+									  }
 
-	DBGLOG(REQ, INFO,
-		   "userspace assoc: calling wlanoidSetBssid BSSID=%pM\n",
-		req->bss->bssid);
+									  if (wextSrchDesiredRoamingConsortiumIE(
+										  (PUINT_8)req->ie,
+																			 req->ie_len,
+												  (PUINT_8 *)&prDesiredIE)) {
+										  rStatus = kalIoctl(prGlueInfo,
+															 wlanoidSetRoamingConsortiumIEInfo,
+							   prDesiredIE,
+							   IE_SIZE(prDesiredIE),
+															 FALSE,
+							   FALSE,
+							   TRUE,
+							   FALSE,
+							   &u4BufLen);
 
-	rStatus = kalIoctl(prGlueInfo,
-					   wlanoidSetBssid,
-					(PVOID)req->bss->bssid,
-					   MAC_ADDR_LEN,
-					FALSE,
-					FALSE,
-					TRUE,
-					FALSE,
-					&u4BufLen);
+										  if (rStatus != WLAN_STATUS_SUCCESS)
+											  DBGLOG(REQ, WARN,
+													 "userspace assoc: set roaming consortium IE failed=%x\n",
+					rStatus);
+												  }
+												  #endif
+		}
 
-	DBGLOG(REQ, INFO,
-		   "userspace assoc: wlanoidSetBssid status=0x%x\n",
-		rStatus);
+		DBGLOG(REQ, INFO,
+			   "userspace assoc: calling wlanoidSetBssid BSSID=%pM\n",
+		 req->bss->bssid);
 
-	if (rStatus != WLAN_STATUS_SUCCESS) {
-		DBGLOG(REQ, WARN,
-			   "userspace assoc: wlanoidSetBssid failed=0x%x\n",
+		rStatus = kalIoctl(prGlueInfo,
+						   wlanoidSetBssid,
+					 (PVOID)req->bss->bssid,
+						   MAC_ADDR_LEN,
+					 FALSE,
+					 FALSE,
+					 TRUE,
+					 FALSE,
+					 &u4BufLen);
+
+		DBGLOG(REQ, INFO,
+			   "userspace assoc: wlanoidSetBssid status=0x%x\n",
 		 rStatus);
-		return -EINVAL;
-	}
 
-	return 0;
+		if (rStatus != WLAN_STATUS_SUCCESS) {
+			DBGLOG(REQ, WARN,
+				   "userspace assoc: wlanoidSetBssid failed=0x%x\n",
+		  rStatus);
+			return -EINVAL;
+		}
+
+		return 0;
 }
 
 #if CONFIG_NL80211_TESTMODE

@@ -132,6 +132,7 @@
 #define RSN_AKM_SUITE_NONE              0x00AC0F00
 #define RSN_AKM_SUITE_802_1X            0x01AC0F00
 #define RSN_AKM_SUITE_PSK               0x02AC0F00
+#define RSN_AKM_SUITE_SAE               0x08AC0F00
 #if CFG_SUPPORT_802_11R
 #define RSN_AKM_SUITE_FT_802_1X         0x03AC0F00
 #define RSN_AKM_SUITE_FT_PSK            0x04AC0F00
