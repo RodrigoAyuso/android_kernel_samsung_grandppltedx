@@ -2380,64 +2380,137 @@ void rsnSaQueryRequest(IN P_ADAPTER_T prAdapter, IN P_SW_RFB_T prSwRfb)
 	P_STA_RECORD_T prStaRec;
 	P_ACTION_SA_QUERY_FRAME prTxFrame;
 
-	prBssInfo = &prAdapter->rWifiVar.arBssInfo[NETWORK_TYPE_AIS_INDEX];
+	prBssInfo =
+	&prAdapter->rWifiVar.arBssInfo[NETWORK_TYPE_AIS_INDEX];
 	ASSERT(prBssInfo);
 
-	prRxFrame = (P_ACTION_SA_QUERY_FRAME) prSwRfb->pvHeader;
+	prRxFrame =
+	(P_ACTION_SA_QUERY_FRAME)prSwRfb->pvHeader;
+
 	if (!prRxFrame)
 		return;
 
-	prStaRec = cnmGetStaRecByIndex(prAdapter, prSwRfb->ucStaRecIdx);
+	prStaRec =
+	cnmGetStaRecByIndex(prAdapter,
+						prSwRfb->ucStaRecIdx);
 
-	DBGLOG(RSN, INFO, "IEEE 802.11: Received SA Query Request from %pM\n", prStaRec->aucMacAddr);
+	/*
+	 * The AP may send an SA Query while SAE association is still
+	 * pending.  During association retry/comeback, AIS may already
+	 * have released the STA_RECORD referenced by ucStaRecIdx.
+	 *
+	 * Never dereference prStaRec before validating it.
+	 */
+	DBGLOG(RSN, INFO,
+		   "IEEE 802.11: Received SA Query Request from %pM staIdx=%u\n",
+		prRxFrame->aucSrcAddr,
+		prSwRfb->ucStaRecIdx);
 
-	DBGLOG_MEM8(RSN, TRACE, prRxFrame->ucTransId, ACTION_SA_QUERY_TR_ID_LEN);
+	DBGLOG_MEM8(RSN, TRACE,
+				prRxFrame->ucTransId,
+			 ACTION_SA_QUERY_TR_ID_LEN);
 
-	if (kalGetMediaStateIndicated(prAdapter->prGlueInfo) == PARAM_MEDIA_STATE_DISCONNECTED) {
-		DBGLOG(RSN, TRACE, "IEEE 802.11: Ignore SA Query Request from unassociated STA %pM\n",
-				    prStaRec->aucMacAddr);
+	/*
+	 * There is no established PMF security association yet while
+	 * cfg80211/AIS still reports disconnected.  Ignore the request.
+	 */
+	if (kalGetMediaStateIndicated(prAdapter->prGlueInfo) ==
+		PARAM_MEDIA_STATE_DISCONNECTED) {
+
+		DBGLOG(RSN, INFO,
+			   "IEEE 802.11: Ignore SA Query Request from unassociated STA %pM\n",
+		 prRxFrame->aucSrcAddr);
+
 		return;
-	}
-	DBGLOG(RSN, INFO, "IEEE 802.11: Sending SA Query Response to %pM\n", prStaRec->aucMacAddr);
+		}
 
-	prMsduInfo = (P_MSDU_INFO_T) cnmMgtPktAlloc(prAdapter, MAC_TX_RESERVED_FIELD + PUBLIC_ACTION_MAX_LEN);
+		if (!prStaRec) {
+			DBGLOG(RSN, WARN,
+				   "IEEE 802.11: Ignore SA Query Request without STA record from %pM idx=%u\n",
+		  prRxFrame->aucSrcAddr,
+		  prSwRfb->ucStaRecIdx);
 
-	if (!prMsduInfo)
-		return;
+			return;
+		}
 
-	prTxFrame = (P_ACTION_SA_QUERY_FRAME)
-	    ((ULONG) (prMsduInfo->prPacket) + MAC_TX_RESERVED_FIELD);
+		DBGLOG(RSN, INFO,
+			   "IEEE 802.11: Sending SA Query Response to %pM\n",
+		 prStaRec->aucMacAddr);
+
+		prMsduInfo =
+		(P_MSDU_INFO_T)cnmMgtPktAlloc(
+			prAdapter,
+			MAC_TX_RESERVED_FIELD +
+			PUBLIC_ACTION_MAX_LEN);
+
+		if (!prMsduInfo)
+			return;
+
+	prTxFrame =
+	(P_ACTION_SA_QUERY_FRAME)
+	((ULONG)prMsduInfo->prPacket +
+	MAC_TX_RESERVED_FIELD);
 
 	prTxFrame->u2FrameCtrl = MAC_FRAME_ACTION;
-	/* SA Query always with protected */
-	prTxFrame->u2FrameCtrl |= MASK_FC_PROTECTED_FRAME;
 
-	COPY_MAC_ADDR(prTxFrame->aucDestAddr, prBssInfo->aucBSSID);
-	COPY_MAC_ADDR(prTxFrame->aucSrcAddr, prBssInfo->aucOwnMacAddr);
-	COPY_MAC_ADDR(prTxFrame->aucBSSID, prBssInfo->aucBSSID);
+	/* SA Query always protected */
+	prTxFrame->u2FrameCtrl |=
+	MASK_FC_PROTECTED_FRAME;
 
-	prTxFrame->ucCategory = CATEGORY_SA_QUERT_ACTION;
-	prTxFrame->ucAction = ACTION_SA_QUERY_RESPONSE;
+	COPY_MAC_ADDR(prTxFrame->aucDestAddr,
+				  prStaRec->aucMacAddr);
 
-	kalMemCopy(prTxFrame->ucTransId, prRxFrame->ucTransId, ACTION_SA_QUERY_TR_ID_LEN);
+	COPY_MAC_ADDR(prTxFrame->aucSrcAddr,
+				  prBssInfo->aucOwnMacAddr);
 
-	u2PayloadLen = 2 + ACTION_SA_QUERY_TR_ID_LEN;
+	COPY_MAC_ADDR(prTxFrame->aucBSSID,
+				  prBssInfo->aucBSSID);
 
-	/* 4 Update information of MSDU_INFO_T */
-	prMsduInfo->ucPacketType = HIF_TX_PACKET_TYPE_MGMT;	/* Management frame */
-	prMsduInfo->ucStaRecIndex = prBssInfo->prStaRecOfAP->ucIndex;
-	prMsduInfo->ucNetworkType = prBssInfo->ucNetTypeIndex;
-	prMsduInfo->ucMacHeaderLength = WLAN_MAC_MGMT_HEADER_LEN;
+	prTxFrame->ucCategory =
+	CATEGORY_SA_QUERT_ACTION;
+
+	prTxFrame->ucAction =
+	ACTION_SA_QUERY_RESPONSE;
+
+	kalMemCopy(prTxFrame->ucTransId,
+			   prRxFrame->ucTransId,
+			ACTION_SA_QUERY_TR_ID_LEN);
+
+	u2PayloadLen =
+	2 + ACTION_SA_QUERY_TR_ID_LEN;
+
+	/* Update MSDU_INFO_T */
+	prMsduInfo->ucPacketType =
+	HIF_TX_PACKET_TYPE_MGMT;
+
+	/*
+	 * prStaRec is explicitly validated above.
+	 * Do not dereference prBssInfo->prStaRecOfAP here.
+	 */
+	prMsduInfo->ucStaRecIndex =
+	prStaRec->ucIndex;
+
+	prMsduInfo->ucNetworkType =
+	prBssInfo->ucNetTypeIndex;
+
+	prMsduInfo->ucMacHeaderLength =
+	WLAN_MAC_MGMT_HEADER_LEN;
+
 	prMsduInfo->fgIs802_1x = FALSE;
 	prMsduInfo->fgIs802_11 = TRUE;
-	prMsduInfo->u2FrameLength = WLAN_MAC_MGMT_HEADER_LEN + u2PayloadLen;
-	prMsduInfo->ucTxSeqNum = nicIncreaseTxSeqNum(prAdapter);
+
+	prMsduInfo->u2FrameLength =
+	WLAN_MAC_MGMT_HEADER_LEN +
+	u2PayloadLen;
+
+	prMsduInfo->ucTxSeqNum =
+	nicIncreaseTxSeqNum(prAdapter);
+
 	prMsduInfo->pfTxDoneHandler = NULL;
 	prMsduInfo->fgIsBasicRate = FALSE;
 
-	/* 4 Enqueue the frame to send this action frame. */
-	nicTxEnqueueMsdu(prAdapter, prMsduInfo);
-
+	nicTxEnqueueMsdu(prAdapter,
+					 prMsduInfo);
 }
 
 /*----------------------------------------------------------------------------*/
@@ -2450,53 +2523,110 @@ void rsnSaQueryRequest(IN P_ADAPTER_T prAdapter, IN P_SW_RFB_T prSwRfb)
 *      Called by: AIS module, Handle Rx mgmt request
 */
 /*----------------------------------------------------------------------------*/
-void rsnSaQueryAction(IN P_ADAPTER_T prAdapter, IN P_SW_RFB_T prSwRfb)
+void rsnSaQueryAction(IN P_ADAPTER_T prAdapter,
+					  IN P_SW_RFB_T prSwRfb)
 {
 	P_AIS_SPECIFIC_BSS_INFO_T prBssSpecInfo;
 	P_ACTION_SA_QUERY_FRAME prRxFrame;
 	P_STA_RECORD_T prStaRec;
 	UINT_32 i;
 
-	prBssSpecInfo = &prAdapter->rWifiVar.rAisSpecificBssInfo;
+	prBssSpecInfo =
+	&prAdapter->rWifiVar.rAisSpecificBssInfo;
+
 	ASSERT(prBssSpecInfo);
 
-	prRxFrame = (P_ACTION_SA_QUERY_FRAME) prSwRfb->pvHeader;
-	prStaRec = cnmGetStaRecByIndex(prAdapter, prSwRfb->ucStaRecIdx);
+	prRxFrame =
+	(P_ACTION_SA_QUERY_FRAME)
+	prSwRfb->pvHeader;
 
-	if (prSwRfb->u2PacketLen < ACTION_SA_QUERY_TR_ID_LEN) {
-		DBGLOG(RSN, WARN, "IEEE 802.11: Too short SA Query Action frame (len=%u)\n",
-				    prSwRfb->u2PacketLen);
+	if (!prRxFrame)
 		return;
-	}
 
-	if (prRxFrame->ucAction == ACTION_SA_QUERY_REQUEST) {
-		rsnSaQueryRequest(prAdapter, prSwRfb);
+	if (prSwRfb->u2PacketLen <
+		ACTION_SA_QUERY_TR_ID_LEN) {
+		DBGLOG(RSN, WARN,
+			   "IEEE 802.11: Too short SA Query Action frame (len=%u)\n",
+			   prSwRfb->u2PacketLen);
 		return;
-	}
+		}
 
-	if (prRxFrame->ucAction != ACTION_SA_QUERY_RESPONSE) {
-		DBGLOG(RSN, WARN, "IEEE 802.11: Unexpected SA Query " "Action %d\n", prRxFrame->ucAction);
-		return;
-	}
+		/*
+		 * Request processing performs its own STA_RECORD validation.
+		 */
+		if (prRxFrame->ucAction ==
+			ACTION_SA_QUERY_REQUEST) {
+			rsnSaQueryRequest(prAdapter,
+							  prSwRfb);
+			return;
+			}
 
-	DBGLOG(RSN, INFO, "IEEE 802.11: Received SA Query Response from %pM\n", prStaRec->aucMacAddr);
+			if (prRxFrame->ucAction !=
+				ACTION_SA_QUERY_RESPONSE) {
 
-	DBGLOG_MEM8(RSN, INFO, prRxFrame->ucTransId, ACTION_SA_QUERY_TR_ID_LEN);
+				DBGLOG(RSN, WARN,
+					   "IEEE 802.11: Unexpected SA Query Action %d\n",
+		   prRxFrame->ucAction);
 
-	/* MLME-SAQuery.confirm */
+				return;
+				}
 
-	for (i = 0; i < prBssSpecInfo->u4SaQueryCount; i++) {
-		if (kalMemCmp(prBssSpecInfo->pucSaQueryTransId +
-			      i * ACTION_SA_QUERY_TR_ID_LEN, prRxFrame->ucTransId, ACTION_SA_QUERY_TR_ID_LEN) == 0)
-			break;
+				prStaRec =
+				cnmGetStaRecByIndex(prAdapter,
+									prSwRfb->ucStaRecIdx);
+
+				if (!prStaRec) {
+					DBGLOG(RSN, WARN,
+						   "IEEE 802.11: Ignore SA Query Response without STA record from %pM idx=%u\n",
+			prRxFrame->aucSrcAddr,
+			prSwRfb->ucStaRecIdx);
+
+					return;
+				}
+
+				DBGLOG(RSN, INFO,
+					   "IEEE 802.11: Received SA Query Response from %pM\n",
+		   prStaRec->aucMacAddr);
+
+				DBGLOG_MEM8(RSN, INFO,
+							prRxFrame->ucTransId,
+				ACTION_SA_QUERY_TR_ID_LEN);
+
+				/*
+				 * Avoid walking a NULL transaction-ID buffer if state was
+				 * cleared asynchronously.
+				 */
+				if (prBssSpecInfo->u4SaQueryCount > 0 &&
+					!prBssSpecInfo->pucSaQueryTransId) {
+
+					DBGLOG(RSN, WARN,
+						   "IEEE 802.11: SA Query transaction list missing count=%u\n",
+			prBssSpecInfo->u4SaQueryCount);
+
+					return;
+					}
+
+					/* MLME-SAQuery.confirm */
+					for (i = 0;
+						 i < prBssSpecInfo->u4SaQueryCount;
+	i++) {
+
+						if (kalMemCmp(
+							prBssSpecInfo->pucSaQueryTransId +
+							i * ACTION_SA_QUERY_TR_ID_LEN,
+					prRxFrame->ucTransId,
+					ACTION_SA_QUERY_TR_ID_LEN) == 0)
+							break;
 	}
 
 	if (i >= prBssSpecInfo->u4SaQueryCount) {
-		DBGLOG(RSN, WARN, "IEEE 802.11: No matching SA Query " "transaction identifier found\n");
+		DBGLOG(RSN, WARN,
+			   "IEEE 802.11: No matching SA Query transaction identifier found\n");
 		return;
 	}
 
-	DBGLOG(RSN, INFO, "Reply to pending SA Query received\n");
+	DBGLOG(RSN, INFO,
+		   "Reply to pending SA Query received\n");
 
 	rsnStopSaQuery(prAdapter);
 }
