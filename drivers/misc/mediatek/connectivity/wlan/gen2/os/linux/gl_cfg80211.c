@@ -2202,70 +2202,131 @@ int mtk_cfg80211_sched_scan_stop(IN struct wiphy *wiphy, IN struct net_device *n
  *         others:  failure
  */
 /*----------------------------------------------------------------------------*/
-int mtk_cfg80211_assoc(struct wiphy *wiphy, struct net_device *ndev, struct cfg80211_assoc_request *req)
+int mtk_cfg80211_assoc(struct wiphy *wiphy,
+					   struct net_device *ndev,
+					   struct cfg80211_assoc_request *req)
 {
 	P_GLUE_INFO_T prGlueInfo = NULL;
-	PARAM_MAC_ADDRESS arBssid;
-#if CFG_SUPPORT_HOTSPOT_2_0
+	#if CFG_SUPPORT_HOTSPOT_2_0
 	PUINT_8 prDesiredIE = NULL;
-#endif
+	#endif
 	WLAN_STATUS rStatus;
 	UINT_32 u4BufLen;
 
-	prGlueInfo = (P_GLUE_INFO_T) wiphy_priv(wiphy);
-	ASSERT(prGlueInfo);
+	if (!wiphy || !ndev || !req || !req->bss ||
+		!req->bss->bssid) {
+		DBGLOG(REQ, ERROR,
+			   "userspace assoc: invalid request\n");
+		return -EINVAL;
+		}
 
-	kalMemZero(arBssid, MAC_ADDR_LEN);
-	wlanQueryInformation(prGlueInfo->prAdapter, wlanoidQueryBssid, &arBssid[0], sizeof(arBssid), &u4BufLen);
-
-	/* 1. check BSSID */
-	if (UNEQUAL_MAC_ADDR(arBssid, req->bss->bssid)) {
-		/* wrong MAC address */
-		DBGLOG(REQ, WARN, "incorrect BSSID: [ %pM ] currently connected BSSID[ %pM ]\n",
-				   req->bss->bssid, arBssid);
-		return -ENOENT;
+		prGlueInfo = (P_GLUE_INFO_T)wiphy_priv(wiphy);
+	if (!prGlueInfo || !prGlueInfo->prAdapter) {
+		DBGLOG(REQ, ERROR,
+			   "userspace assoc: invalid glue/adapter\n");
+		return -EINVAL;
 	}
+
+	DBGLOG(REQ, INFO,
+		   "userspace assoc BSSID=%pM freq=%u ie_len=%u\n",
+		req->bss->bssid,
+		req->bss->channel ?
+		req->bss->channel->center_freq : 0,
+		(UINT_32)req->ie_len);
+
+	/*
+	 * Do NOT query wlanoidQueryBssid here.
+	 *
+	 * With cfg80211 userspace SME, .assoc() is called after
+	 * authentication but before the station is associated.
+	 * Therefore the driver's current BSSID is expected to be empty.
+	 */
 
 	if (req->ie && req->ie_len > 0) {
-#if CFG_SUPPORT_HOTSPOT_2_0
-		if (wextSrchDesiredHS20IE((PUINT_8) req->ie, req->ie_len, (PUINT_8 *) &prDesiredIE)) {
+		#if CFG_SUPPORT_HOTSPOT_2_0
+		if (wextSrchDesiredHS20IE((PUINT_8)req->ie,
+			req->ie_len,
+			(PUINT_8 *)&prDesiredIE)) {
 			rStatus = kalIoctl(prGlueInfo,
-					   wlanoidSetHS20Info,
-					   prDesiredIE, IE_SIZE(prDesiredIE), FALSE, FALSE, TRUE, FALSE, &u4BufLen);
-			if (rStatus != WLAN_STATUS_SUCCESS) {
-				/* Do nothing */
-				/* printk(KERN_INFO "[HS20] set HS20 assoc info error:%lx\n", rStatus); */
-			}
-		}
+							   wlanoidSetHS20Info,
+					  prDesiredIE,
+					  IE_SIZE(prDesiredIE),
+							   FALSE,
+					  FALSE,
+					  TRUE,
+					  FALSE,
+					  &u4BufLen);
 
-		if (wextSrchDesiredInterworkingIE((PUINT_8) req->ie, req->ie_len, (PUINT_8 *) &prDesiredIE)) {
-			rStatus = kalIoctl(prGlueInfo,
-					   wlanoidSetInterworkingInfo,
-					   prDesiredIE, IE_SIZE(prDesiredIE), FALSE, FALSE, TRUE, FALSE, &u4BufLen);
-			if (rStatus != WLAN_STATUS_SUCCESS) {
-				/* Do nothing */
-				/* printk(KERN_INFO "[HS20] set Interworking assoc info error:%lx\n", rStatus); */
+			if (rStatus != WLAN_STATUS_SUCCESS)
+				DBGLOG(REQ, WARN,
+					   "userspace assoc: set HS20 IE failed=%x\n",
+		   rStatus);
 			}
-		}
 
-		if (wextSrchDesiredRoamingConsortiumIE((PUINT_8) req->ie, req->ie_len, (PUINT_8 *) &prDesiredIE)) {
-			rStatus = kalIoctl(prGlueInfo,
-					   wlanoidSetRoamingConsortiumIEInfo,
-					   prDesiredIE, IE_SIZE(prDesiredIE), FALSE, FALSE, TRUE, FALSE, &u4BufLen);
-			if (rStatus != WLAN_STATUS_SUCCESS) {
-				/* Do nothing */
-				/* printk(KERN_INFO "[HS20] set RoamingConsortium assoc info error:%lx\n", rStatus); */
-			}
-		}
-#endif
+			if (wextSrchDesiredInterworkingIE(
+				(PUINT_8)req->ie,
+											  req->ie_len,
+									 (PUINT_8 *)&prDesiredIE)) {
+				rStatus = kalIoctl(prGlueInfo,
+								   wlanoidSetInterworkingInfo,
+					   prDesiredIE,
+					   IE_SIZE(prDesiredIE),
+								   FALSE,
+					   FALSE,
+					   TRUE,
+					   FALSE,
+					   &u4BufLen);
+
+				if (rStatus != WLAN_STATUS_SUCCESS)
+					DBGLOG(REQ, WARN,
+						   "userspace assoc: set Interworking IE failed=%x\n",
+			rStatus);
+									 }
+
+									 if (wextSrchDesiredRoamingConsortiumIE(
+										 (PUINT_8)req->ie,
+																			req->ie_len,
+												 (PUINT_8 *)&prDesiredIE)) {
+										 rStatus = kalIoctl(prGlueInfo,
+															wlanoidSetRoamingConsortiumIEInfo,
+							  prDesiredIE,
+							  IE_SIZE(prDesiredIE),
+															FALSE,
+							  FALSE,
+							  TRUE,
+							  FALSE,
+							  &u4BufLen);
+
+										 if (rStatus != WLAN_STATUS_SUCCESS)
+											 DBGLOG(REQ, WARN,
+													"userspace assoc: set roaming consortium IE failed=%x\n",
+				   rStatus);
+												 }
+												 #endif
 	}
 
+	DBGLOG(REQ, INFO,
+		   "userspace assoc: calling wlanoidSetBssid BSSID=%pM\n",
+		req->bss->bssid);
+
 	rStatus = kalIoctl(prGlueInfo,
-			   wlanoidSetBssid,
-			   (PVOID) req->bss->bssid, MAC_ADDR_LEN, FALSE, FALSE, TRUE, FALSE, &u4BufLen);
+					   wlanoidSetBssid,
+					(PVOID)req->bss->bssid,
+					   MAC_ADDR_LEN,
+					FALSE,
+					FALSE,
+					TRUE,
+					FALSE,
+					&u4BufLen);
+
+	DBGLOG(REQ, INFO,
+		   "userspace assoc: wlanoidSetBssid status=0x%x\n",
+		rStatus);
 
 	if (rStatus != WLAN_STATUS_SUCCESS) {
-		DBGLOG(REQ, WARN, "set BSSID:%x\n", rStatus);
+		DBGLOG(REQ, WARN,
+			   "userspace assoc: wlanoidSetBssid failed=0x%x\n",
+		 rStatus);
 		return -EINVAL;
 	}
 
