@@ -1314,6 +1314,10 @@ VOID kalIndicateRxMgmtFrame(IN P_GLUE_INFO_T prGlueInfo, IN P_SW_RFB_T prSwRfb);
 VOID kalIndicateRxMlmeFrame(IN P_GLUE_INFO_T prGlueInfo,
 			    IN P_SW_RFB_T prSwRfb);
 
+BOOLEAN kalIndicateRxAssocResp(
+	IN P_GLUE_INFO_T prGlueInfo,
+	IN P_SW_RFB_T prSwRfb);
+
 /*----------------------------------------------------------------------------*/
 /* Routines in interface - ehpi/sdio.c                                                       */
 /*----------------------------------------------------------------------------*/

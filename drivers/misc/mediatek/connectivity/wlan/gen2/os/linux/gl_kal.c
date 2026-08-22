@@ -1681,7 +1681,28 @@ kalIndicateStatusAndComplete(IN P_GLUE_INFO_T prGlueInfo, IN WLAN_STATUS eStatus
 		} while (0);
 
 		if (prGlueInfo->fgIsRegistered == TRUE) {
-			/* retrieve channel */
+
+			/*
+			 * SAE is using cfg80211 userspace SME.
+			 *
+			 * The full Association Response was already passed
+			 * through cfg80211_rx_assoc_resp() from AIS
+			 * JOIN_COMPLETE. Do not emit the legacy
+			 * cfg80211_connect_result() as well.
+			 */
+			if (eStatus == WLAN_STATUS_MEDIA_CONNECT &&
+				prGlueInfo->prAdapter->rWifiVar.rConnSettings.
+				rRsnInfo.au4AuthKeyMgtSuite[0] ==
+				WLAN_AKM_SUITE_SAE &&
+				prGlueInfo->prDevHandler->ieee80211_ptr &&
+				prGlueInfo->prDevHandler->ieee80211_ptr->
+				current_bss) {
+
+				DBGLOG(AIS, INFO,
+					   "SAE: cfg80211 association already completed by rx_assoc_resp\n");
+
+				break;
+				}
 			ucChannelNum = wlanGetChannelNumberByNetwork(prGlueInfo->prAdapter, NETWORK_TYPE_AIS_INDEX);
 			if (ucChannelNum <= 14) {
 				prChannel =
@@ -4226,6 +4247,116 @@ VOID kalIndicateRxMlmeFrame(IN P_GLUE_INFO_T prGlueInfo,
 	mutex_unlock(&wdev->mtx);
 }
 
+BOOLEAN
+kalIndicateRxAssocResp(IN P_GLUE_INFO_T prGlueInfo,
+					   IN P_SW_RFB_T prSwRfb)
+{
+	struct net_device *prDev;
+	struct wireless_dev *prWdev;
+	struct wiphy *prWiphy;
+	struct ieee80211_mgmt *prMgmt;
+	struct cfg80211_bss *prBss;
+	struct ieee80211_channel *prChannel = NULL;
+	UINT_8 ucChannelNum;
+
+	if (!prGlueInfo || !prSwRfb || !prSwRfb->pvHeader)
+		return FALSE;
+
+	prDev = prGlueInfo->prDevHandler;
+	if (!prDev)
+		return FALSE;
+
+	prWdev = prDev->ieee80211_ptr;
+	if (!prWdev || !prWdev->wiphy)
+		return FALSE;
+
+	prWiphy = prWdev->wiphy;
+	prMgmt = (struct ieee80211_mgmt *)prSwRfb->pvHeader;
+
+	/*
+	 * Use the AIS operating channel to make the cfg80211 BSS lookup
+	 * as precise as possible.
+	 */
+	ucChannelNum = wlanGetChannelNumberByNetwork(
+		prGlueInfo->prAdapter,
+		NETWORK_TYPE_AIS_INDEX);
+
+	if (ucChannelNum != 0) {
+		if (ucChannelNum <= 14)
+			prChannel = ieee80211_get_channel(
+				prWiphy,
+				ieee80211_channel_to_frequency(
+					ucChannelNum,
+					IEEE80211_BAND_2GHZ));
+			else
+				prChannel = ieee80211_get_channel(
+					prWiphy,
+					ieee80211_channel_to_frequency(
+						ucChannelNum,
+						IEEE80211_BAND_5GHZ));
+	}
+
+	prBss = cfg80211_get_bss(
+		prWiphy,
+		prChannel,
+		prMgmt->bssid,
+		NULL,
+		0,
+		WLAN_CAPABILITY_ESS,
+		WLAN_CAPABILITY_ESS);
+
+	/*
+	 * The AP should already be present from the scan. Try again
+	 * without constraining the channel if necessary.
+	 */
+	if (!prBss) {
+		prBss = cfg80211_get_bss(
+			prWiphy,
+			NULL,
+			prMgmt->bssid,
+			NULL,
+			0,
+			WLAN_CAPABILITY_ESS,
+			WLAN_CAPABILITY_ESS);
+	}
+
+	if (!prBss) {
+		DBGLOG(AIS, ERROR,
+			   "SAE: cfg80211 BSS missing for assoc response %pM ch=%u\n",
+		 prMgmt->bssid,
+		 ucChannelNum);
+		return FALSE;
+	}
+
+	DBGLOG(AIS, INFO,
+		   "SAE: indicate assoc response BSSID=%pM ch=%u len=%u status=%u\n",
+		prMgmt->bssid,
+		ucChannelNum,
+		prSwRfb->u2PacketLen,
+		le16_to_cpu(prMgmt->u.assoc_resp.status_code));
+
+	/*
+	 * cfg80211_rx_assoc_resp() consumes the BSS reference.
+	 * Do NOT cfg80211_put_bss() after this call.
+	 *
+	 * Kernel requires the wdev mutex to be held.
+	 */
+	mutex_lock(&prWdev->mtx);
+
+	cfg80211_rx_assoc_resp(
+		prDev,
+		prBss,
+		(const u8 *)prSwRfb->pvHeader,
+						   prSwRfb->u2PacketLen,
+						-1);
+
+	mutex_unlock(&prWdev->mtx);
+
+	DBGLOG(AIS, INFO,
+		   "SAE: cfg80211 association response indicated\n");
+
+	return TRUE;
+}
 
 #if CFG_SUPPORT_AGPS_ASSIST
 BOOLEAN kalIndicateAgpsNotify(P_ADAPTER_T prAdapter, UINT_8 cmd, PUINT_8 data, UINT_16 dataLen)

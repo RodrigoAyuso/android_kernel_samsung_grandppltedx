@@ -3032,6 +3032,26 @@ VOID aisFsmRunEventJoinComplete(IN P_ADAPTER_T prAdapter, IN P_MSG_HDR_T prMsgHd
 				nicUpdateRSSI(prAdapter, NETWORK_TYPE_AIS_INDEX,
 					      (INT_8) (RCPI_TO_dBm(prStaRec->ucRCPI)), 0);
 
+				/*
+				 * For cfg80211 userspace SME/SAE, cfg80211
+				 * must receive the actual Association Response.
+				 *
+				 * prAssocRspSwRfb is retained by SAA until this
+				 * JOIN_COMPLETE handler returns.
+				 */
+				if (prAssocRspSwRfb &&
+					prAdapter->rWifiVar.rConnSettings.
+					rRsnInfo.au4AuthKeyMgtSuite[0] ==
+					WLAN_AKM_SUITE_SAE) {
+
+					if (!kalIndicateRxAssocResp(
+						prAdapter->prGlueInfo,
+						prAssocRspSwRfb)) {
+						DBGLOG(AIS, ERROR,
+							   "SAE: failed to indicate association response\n");
+						}
+					}
+
 				/* 4 <1.6> Indicate Connected Event to Host immediately. */
 				/* Require BSSID, Association ID, Beacon Interval.. */
 				/* from AIS_BSS_INFO_T */
