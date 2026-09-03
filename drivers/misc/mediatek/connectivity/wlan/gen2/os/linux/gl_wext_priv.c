@@ -216,6 +216,22 @@
 
 #include "gl_os.h"
 #include "gl_wext_priv.h"
+/*
+ * grandppltedx: Android 8 SETSUSPENDMODE bridge
+ *
+ * gl_cfg80211.c already uses these same suspend/resume entry points for
+ * TESTMODE_CMD_ID_SUSPEND. Expose them here so the Android private command
+ * can invoke the existing MTK gen2 suspend implementation while Wi-Fi worker
+ * threads are still alive.
+ */
+extern BOOLEAN fgIsUnderSuspend;
+extern void wlanHandleSystemSuspend(void);
+extern void wlanHandleSystemResume(void);
+#if CFG_ENABLE_WIFI_DIRECT
+extern void p2pHandleSystemSuspend(void);
+extern void p2pHandleSystemResume(void);
+#endif
+
 #if CFG_SUPPORT_WAPI
 #include "gl_sec.h"
 #endif
@@ -4536,6 +4552,66 @@ int priv_driver_ecsa(IN struct net_device *prNetDev, IN char *pcCommand, IN int 
 	return 0;
 }
 
+static INT_32
+priv_driver_set_suspend_mode_android8(IN struct net_device *prNetDev,
+				      IN PCHAR pcCommand,
+				      IN INT_32 i4TotalLen)
+{
+	P_GLUE_INFO_T prGlueInfo = NULL;
+	INT_32 i4Argc = 0;
+	PCHAR apcArgv[WLAN_CFG_ARGV_MAX] = { 0 };
+	UINT_32 u4Suspend = 0;
+	WLAN_STATUS rStatus;
+
+	if (FALSE == GLUE_CHK_PR2(prNetDev, pcCommand))
+		return -EINVAL;
+
+	prGlueInfo = *((P_GLUE_INFO_T *) netdev_priv(prNetDev));
+	if (!prGlueInfo || !prGlueInfo->prAdapter)
+		return -EFAULT;
+
+	rStatus = wlanCfgParseArgument(pcCommand, &i4Argc, apcArgv);
+	if (rStatus != WLAN_STATUS_SUCCESS || i4Argc != 2) {
+		DBGLOG(REQ, WARN, "Invalid SETSUSPENDMODE command: %s\n",
+		       pcCommand);
+		return -EINVAL;
+	}
+
+	if (kalkStrtou32(apcArgv[1], 0, &u4Suspend) || u4Suspend > 1) {
+		DBGLOG(REQ, WARN, "SETSUSPENDMODE expects 0 or 1: %s\n",
+		       pcCommand);
+		return -EINVAL;
+	}
+
+	/*
+	 * Reuse the driver's own state flag. This makes repeated Android
+	 * SETSUSPENDMODE calls harmless and stays coherent with testmode.
+	 */
+	if ((u4Suspend ? TRUE : FALSE) == fgIsUnderSuspend) {
+		DBGLOG(REQ, INFO, "Android SETSUSPENDMODE %u already active\n",
+		       u4Suspend);
+		return i4TotalLen;
+	}
+
+	DBGLOG(REQ, INFO, "Android SETSUSPENDMODE %u\n", u4Suspend);
+
+	if (u4Suspend) {
+		wlanHandleSystemSuspend();
+#if CFG_ENABLE_WIFI_DIRECT
+		if (prGlueInfo->prAdapter->fgIsP2PRegistered)
+			p2pHandleSystemSuspend();
+#endif
+	} else {
+		wlanHandleSystemResume();
+#if CFG_ENABLE_WIFI_DIRECT
+		if (prGlueInfo->prAdapter->fgIsP2PRegistered)
+			p2pHandleSystemResume();
+#endif
+	}
+
+	return i4TotalLen;
+}
+
 int priv_support_driver_cmd(IN struct net_device *prNetDev, IN OUT struct ifreq *prReq, IN int i4Cmd)
 {
 	P_GLUE_INFO_T prGlueInfo = NULL;
@@ -4730,6 +4806,12 @@ INT_32 priv_driver_cmds(IN struct net_device *prNetDev, IN PCHAR pcCommand, IN I
 
 
 
+		else if (strnicmp(pcCommand, CMD_SETSUSPENDMODE,
+				    strlen(CMD_SETSUSPENDMODE)) == 0)
+			i4BytesWritten =
+				priv_driver_set_suspend_mode_android8(prNetDev,
+								     pcCommand,
+								     i4TotalLen);
 #if 0
 
 		else if (strnicmp(pcCommand, CMD_RSSI, strlen(CMD_RSSI)) == 0) {
