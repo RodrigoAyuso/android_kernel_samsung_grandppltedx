@@ -6581,19 +6581,59 @@ wlanoidSetCurrentPacketFilter(IN P_ADAPTER_T prAdapter,
 		prAdapter->u4OsPacketFilter &= PARAM_PACKET_FILTER_P2P_MASK;
 		prAdapter->u4OsPacketFilter |= u4NewPacketFilter;
 
-		return wlanSendSetQueryCmd(prAdapter,
-					   CMD_ID_SET_RX_FILTER,
-					   TRUE,
-					   FALSE,
-					   TRUE,
-					   nicCmdEventSetCommon,
-					   nicOidCmdTimeoutCommon,
-					   sizeof(UINT_32),
-					   (PUINT_8) &prAdapter->u4OsPacketFilter, pvSetBuffer, u4SetBufferLen);
+		rStatus = wlanoidSetPacketFilter(prAdapter,
+					       prAdapter->u4OsPacketFilter,
+					       TRUE,
+					       pvSetBuffer,
+					       u4SetBufferLen);
+		return rStatus;
+
 	} else {
 		return rStatus;
 	}
 }				/* wlanoidSetCurrentPacketFilter */
+/*
+ * grandppltedx patch4: MTK gen3-style suspend packet filter
+ *
+ * Keep prAdapter->u4OsPacketFilter as the OS-requested filter. Only the
+ * value sent to firmware is stripped of multicast while system suspend is
+ * active, matching the later MTK gen3 implementation.
+ */
+WLAN_STATUS
+wlanoidSetPacketFilter(IN P_ADAPTER_T prAdapter,
+		       IN UINT_32 u4PacketFilter,
+		       IN BOOLEAN fgIsOid,
+		       IN PVOID pvSetBuffer,
+		       IN UINT_32 u4SetBufferLen)
+{
+	ASSERT(prAdapter);
+
+	if (prAdapter->prGlueInfo &&
+	    prAdapter->prGlueInfo->fgIsInSuspendMode)
+		u4PacketFilter &=
+			~(PARAM_PACKET_FILTER_MULTICAST |
+			  PARAM_PACKET_FILTER_ALL_MULTICAST);
+
+	DBGLOG(OID, INFO,
+	       "RX filter firmware=%#08x os=%#08x suspend=%d\n",
+	       u4PacketFilter,
+	       prAdapter->u4OsPacketFilter,
+	       prAdapter->prGlueInfo ?
+		       prAdapter->prGlueInfo->fgIsInSuspendMode : 0);
+
+	return wlanSendSetQueryCmd(prAdapter,
+				   CMD_ID_SET_RX_FILTER,
+				   TRUE,
+				   FALSE,
+				   fgIsOid,
+				   nicCmdEventSetCommon,
+				   nicOidCmdTimeoutCommon,
+				   sizeof(UINT_32),
+				   (PUINT_8) &u4PacketFilter,
+				   pvSetBuffer,
+				   u4SetBufferLen);
+}
+
 
 /*----------------------------------------------------------------------------*/
 /*!

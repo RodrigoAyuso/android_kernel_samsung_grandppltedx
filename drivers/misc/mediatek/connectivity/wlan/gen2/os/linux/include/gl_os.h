@@ -954,6 +954,9 @@ struct _GLUE_INFO_T {
 	/* to indicate registered or not */
 	BOOLEAN fgIsRegistered;
 
+	/* grandppltedx patch4: firmware suspend packet-filter state */
+	BOOLEAN fgIsInSuspendMode;
+
 	/* for cfg80211 connected indication */
 	UINT_32 u4RspIeLength;
 	UINT_8 aucRspIe[CFG_CFG80211_IE_BUF_LEN];

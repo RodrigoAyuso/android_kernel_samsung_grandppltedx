@@ -2387,6 +2387,7 @@ static struct wireless_dev *wlanNetCreate(PVOID pvData)
 	prGlueInfo->ePowerState = ParamDeviceStateD0;
 	prGlueInfo->fgIsMacAddrOverride = FALSE;
 	prGlueInfo->fgIsRegistered = FALSE;
+	prGlueInfo->fgIsInSuspendMode = FALSE;
 	prGlueInfo->prScanRequest = NULL;
 
 #if CFG_SUPPORT_HOTSPOT_2_0
@@ -2512,6 +2513,31 @@ static void wlanNotifyFwSuspend(P_GLUE_INFO_T prGlueInfo, BOOLEAN fgSuspend)
 		DBGLOG(INIT, INFO, "wlanNotifyFwSuspend fail\n");
 }
 
+/*
+ * grandppltedx patch4: reapply RX filter on suspend transitions
+ *
+ * u4OsPacketFilter remains untouched. wlanoidSetPacketFilter() applies the
+ * suspend multicast mask only to the value sent to firmware.
+ */
+static void wlanApplySuspendPacketFilter(P_GLUE_INFO_T prGlueInfo)
+{
+	WLAN_STATUS rStatus;
+
+	if (!prGlueInfo || !prGlueInfo->prAdapter)
+		return;
+
+	rStatus = wlanoidSetPacketFilter(prGlueInfo->prAdapter,
+					prGlueInfo->prAdapter->u4OsPacketFilter,
+					FALSE,
+					NULL,
+					0);
+	if (rStatus != WLAN_STATUS_SUCCESS &&
+	    rStatus != WLAN_STATUS_PENDING)
+		DBGLOG(INIT, WARN,
+		       "Failed to apply suspend RX filter, status=0x%x\n",
+		       rStatus);
+}
+
 void wlanHandleSystemSuspend(void)
 {
 	WLAN_STATUS rStatus = WLAN_STATUS_FAILURE;
@@ -2537,6 +2563,10 @@ void wlanHandleSystemSuspend(void)
 	fgIsUnderSuspend = true;
 	prGlueInfo = *((P_GLUE_INFO_T *) netdev_priv(prDev));
 	ASSERT(prGlueInfo);
+	if (prGlueInfo) {
+		prGlueInfo->fgIsInSuspendMode = TRUE;
+		wlanApplySuspendPacketFilter(prGlueInfo);
+	}
 
 	if (!prDev || !(prDev->ip_ptr) ||
 	    !((struct in_device *)(prDev->ip_ptr))->ifa_list ||
@@ -2704,6 +2734,11 @@ notify_resume:
 		       ip[0], ip[1], ip[2], ip[3], rStatus);
 	if (rStatus != WLAN_STATUS_SUCCESS) {
 		wlanNotifyFwSuspend(prGlueInfo, FALSE);
+	}
+	/* grandppltedx patch4.3: restore RX filter after resume sync */
+	if (prGlueInfo) {
+		prGlueInfo->fgIsInSuspendMode = FALSE;
+		wlanApplySuspendPacketFilter(prGlueInfo);
 	}
 }
 #endif /* ! CONFIG_X86 */
