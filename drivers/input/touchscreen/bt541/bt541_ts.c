@@ -1360,9 +1360,20 @@ static void ts_tmr_work(struct work_struct *work)
 	}
 
 	if (info->work_state != NOTHING) {
+		bool rearm_esd;
+
+		/* LineageOS: rearm ESD watchdog only while touch is operational. */
+		rearm_esd = info->enabled &&
+			info->work_state != EALRY_SUSPEND &&
+			info->work_state != SUSPEND &&
+			info->work_state != REMOVE;
+
 		input_info(true, &client->dev, "%s: Other process occupied (%d)\n",
 				__func__, info->work_state);
 		up(&info->work_lock);
+
+		if (rearm_esd)
+			esd_timer_start(CHECK_ESD_TIMER, info);
 
 		return;
 	}
@@ -3482,8 +3493,24 @@ static int bt541_ts_open(struct input_dev *dev)
 	info->work_state = RESUME;
 #else
 	info->work_state = NOTHING;
-	if (mini_init_touch(info) == false)
-		input_err(true, &client->dev, "Failed to resume\n");
+	if (mini_init_touch(info) == false) {
+		input_err(true, &client->dev, "Failed to resume, trying hard recovery\n");
+
+		/* LineageOS: retry one full power-cycle before giving up on resume. */
+		bt541_power_control(info, POWER_OFF);
+		if (bt541_power_control(info, POWER_ON_SEQUENCE) == false ||
+				mini_init_touch(info) == false) {
+			input_err(true, &client->dev,
+					"Failed to recover touchscreen after resume\n");
+#if ESD_TIMER_INTERVAL
+			/*
+			 * mini_init_touch() only starts the one-shot ESD timer on
+			 * success. Keep the recovery path alive after a failed resume.
+			 */
+			esd_timer_start(CHECK_ESD_TIMER, info);
+#endif
+		}
+	}
 
 	if (read_data(client, BT541_FIRMWARE_VERSION, (u8 *)&cap->fw_version, 2))
 		;
@@ -6784,10 +6811,9 @@ static struct i2c_driver bt541_ts_driver = {
 		.owner		= THIS_MODULE,
 		.name		= BT541_TS_DEVICE,
 		.of_match_table	= tsp_dt_ids,
-#if 0 /* do not pm */
+/* LineageOS: allow BT541 to actually suspend with the device. */
 #if defined(CONFIG_PM) && !defined(CONFIG_HAS_EARLYSUSPEND)
 		.pm		= &bt541_ts_pm_ops,
-#endif
 #endif
 	},
 };
