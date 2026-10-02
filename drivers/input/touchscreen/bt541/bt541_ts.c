@@ -1,3 +1,4 @@
+/* BT541_V8_RECOVERY_20260927: experimental confirmed-DELTA recovery. */
 /*
  *
  * Zinitix bt541 touchscreen driver
@@ -30,6 +31,10 @@
 #include <linux/semaphore.h>
 #include <linux/timer.h>
 #include <linux/workqueue.h>
+#include <linux/atomic.h>
+#include <linux/jiffies.h>
+#include <linux/mutex.h>
+#include <linux/fb.h>
 #include <linux/slab.h>
 #include <linux/delay.h>
 #include <linux/gpio.h>
@@ -116,7 +121,7 @@
 #define DELAY_FOR_TRANSCATION			50
 #define DELAY_FOR_POST_TRANSCATION		10
 #define IUM_SET_TIMEOUT				64 /*1.7s*/
-#define HZ	1000
+#define BT541_USEC_PER_MSEC	1000
 /*PAT MODE*/
 
 #ifdef PAT_CONTROL
@@ -171,6 +176,14 @@ enum fw_sequence {
 #define ESD_TIMER_INTERVAL			1
 #define SCAN_RATE_HZ				100
 #define CHECK_ESD_TIMER				3
+
+/* V8: hardware-dependent experimental detector; never reset on idle alone. */
+#define BT541_V8_DEFAULT_AUTO 1
+#define BT541_V8_INTERVAL_MS 30000U
+#define BT541_V8_QUIET_MS 10000U
+#define BT541_V8_CONFIRM_MS 2000U
+#define BT541_V8_COOLDOWN_MS 120000U
+#define BT541_V8_DELTA_THRESHOLD 500
 
 /*Test Mode (Monitoring Raw Data) */
 #define MAX_RAW_DATA_SZ				576 /* 32x18 */
@@ -410,53 +423,106 @@ static void run_mis_cal_read(void *device_data);
 static void get_mis_cal(void *device_data);
 
 
+static void force_recover(void *device_data);
+
+static void get_watchdog_status(void *device_data);
+static void set_auto_recover(void *device_data);
+static void get_touch_health(void *device_data);
+static void v8_fw_update(void *device_data);
+static void v8_get_fw_ver_bin(void *device_data);
+static void v8_get_fw_ver_ic(void *device_data);
+static void v8_get_threshold(void *device_data);
+static void v8_module_off_master(void *device_data);
+static void v8_module_on_master(void *device_data);
+static void v8_module_off_slave(void *device_data);
+static void v8_module_on_slave(void *device_data);
+static void v8_get_chip_vendor(void *device_data);
+static void v8_get_chip_name(void *device_data);
+static void v8_get_x_num(void *device_data);
+static void v8_get_y_num(void *device_data);
+static void v8_not_support_cmd(void *device_data);
+static void v8_run_reference_read(void *device_data);
+static void v8_get_reference(void *device_data);
+static void v8_run_delta_read(void *device_data);
+static void v8_get_delta(void *device_data);
+static void v8_run_dnd_read(void *device_data);
+static void v8_get_dnd(void *device_data);
+static void v8_run_dnd_v_gap_read(void *device_data);
+static void v8_get_dnd_v_gap(void *device_data);
+static void v8_run_dnd_h_gap_read(void *device_data);
+static void v8_get_dnd_h_gap(void *device_data);
+static void v8_run_hfdnd_read(void *device_data);
+static void v8_get_hfdnd(void *device_data);
+static void v8_run_hfdnd_v_gap_read(void *device_data);
+static void v8_get_hfdnd_v_gap(void *device_data);
+static void v8_run_hfdnd_h_gap_read(void *device_data);
+static void v8_get_hfdnd_h_gap(void *device_data);
+static void v8_run_gapjitter_read(void *device_data);
+static void v8_get_gapjitter(void *device_data);
+static void v8_hfdnd_spec_adjust(void *device_data);
+static void v8_clear_reference_data(void *device_data);
+static void v8_run_force_calibration(void *device_data);
+static void v8_get_pat_information(void *device_data);
+static void v8_get_calibration_nv_data(void *device_data);
+static void v8_get_tune_fix_ver_data(void *device_data);
+static void v8_set_calibration_nv_data(void *device_data);
+static void v8_set_tune_fix_ver_data(void *device_data);
+static void v8_dead_zone_enable(void *device_data);
+static void v8_run_mis_cal_read(void *device_data);
+static void v8_get_mis_cal(void *device_data);
+static void v8_force_recover(void *device_data);
+static void v8_set_auto_recover(void *device_data);
 static struct sec_cmd bt541_commands[] = {
-	{SEC_CMD("fw_update", fw_update),},
-	{SEC_CMD("get_fw_ver_bin", get_fw_ver_bin),},
-	{SEC_CMD("get_fw_ver_ic", get_fw_ver_ic),},
-	{SEC_CMD("get_threshold", get_threshold),},
-	{SEC_CMD("module_off_master", module_off_master),},
-	{SEC_CMD("module_on_master", module_on_master),},
-	{SEC_CMD("module_off_slave", module_off_slave),},
-	{SEC_CMD("module_on_slave", module_on_slave),},
-	{SEC_CMD("get_chip_vendor", get_chip_vendor),},
-	{SEC_CMD("get_chip_name", get_chip_name),},
-	{SEC_CMD("get_x_num", get_x_num),},
-	{SEC_CMD("get_y_num", get_y_num),},
-	{SEC_CMD("not_support_cmd", not_support_cmd),},
+	{SEC_CMD("fw_update", v8_fw_update),},
+	{SEC_CMD("get_fw_ver_bin", v8_get_fw_ver_bin),},
+	{SEC_CMD("get_fw_ver_ic", v8_get_fw_ver_ic),},
+	{SEC_CMD("get_threshold", v8_get_threshold),},
+	{SEC_CMD("module_off_master", v8_module_off_master),},
+	{SEC_CMD("module_on_master", v8_module_on_master),},
+	{SEC_CMD("module_off_slave", v8_module_off_slave),},
+	{SEC_CMD("module_on_slave", v8_module_on_slave),},
+	{SEC_CMD("get_chip_vendor", v8_get_chip_vendor),},
+	{SEC_CMD("get_chip_name", v8_get_chip_name),},
+	{SEC_CMD("get_x_num", v8_get_x_num),},
+	{SEC_CMD("get_y_num", v8_get_y_num),},
+	{SEC_CMD("not_support_cmd", v8_not_support_cmd),},
 
 	/* vendor dependant command */
-	{SEC_CMD("run_reference_read", run_reference_read),},
-	{SEC_CMD("get_dnd_all_data", get_reference),},
-	{SEC_CMD("run_delta_read", run_delta_read),},
-	{SEC_CMD("get_delta_all_data", get_delta),},
-	{SEC_CMD("run_dnd_read", run_dnd_read),},
-	{SEC_CMD("get_dnd", get_dnd),},
-	{SEC_CMD("run_dnd_v_gap_read", run_dnd_v_gap_read),},
-	{SEC_CMD("get_dnd_v_gap", get_dnd_v_gap),},
-	{SEC_CMD("run_dnd_h_gap_read", run_dnd_h_gap_read),},
-	{SEC_CMD("get_dnd_h_gap", get_dnd_h_gap),},
-	{SEC_CMD("run_hfdnd_read", run_hfdnd_read),},
-	{SEC_CMD("get_hfdnd", get_hfdnd),},
-	{SEC_CMD("run_hfdnd_v_gap_read", run_hfdnd_v_gap_read),},
-	{SEC_CMD("get_hfdnd_v_gap", get_hfdnd_v_gap),},
-	{SEC_CMD("run_hfdnd_h_gap_read", run_hfdnd_h_gap_read),},
-	{SEC_CMD("get_hfdnd_h_gap", get_hfdnd_h_gap),},
-	{SEC_CMD("run_gapjitter_read", run_gapjitter_read),},
-	{SEC_CMD("get_gapjitter", get_gapjitter),},
-	{SEC_CMD("hfdnd_spec_adjust", hfdnd_spec_adjust),},
-	{SEC_CMD("clear_reference_data", clear_reference_data),},
-	{SEC_CMD("run_force_calibration", run_force_calibration),},
+	{SEC_CMD("run_reference_read", v8_run_reference_read),},
+	{SEC_CMD("get_dnd_all_data", v8_get_reference),},
+	{SEC_CMD("run_delta_read", v8_run_delta_read),},
+	{SEC_CMD("get_delta_all_data", v8_get_delta),},
+	{SEC_CMD("run_dnd_read", v8_run_dnd_read),},
+	{SEC_CMD("get_dnd", v8_get_dnd),},
+	{SEC_CMD("run_dnd_v_gap_read", v8_run_dnd_v_gap_read),},
+	{SEC_CMD("get_dnd_v_gap", v8_get_dnd_v_gap),},
+	{SEC_CMD("run_dnd_h_gap_read", v8_run_dnd_h_gap_read),},
+	{SEC_CMD("get_dnd_h_gap", v8_get_dnd_h_gap),},
+	{SEC_CMD("run_hfdnd_read", v8_run_hfdnd_read),},
+	{SEC_CMD("get_hfdnd", v8_get_hfdnd),},
+	{SEC_CMD("run_hfdnd_v_gap_read", v8_run_hfdnd_v_gap_read),},
+	{SEC_CMD("get_hfdnd_v_gap", v8_get_hfdnd_v_gap),},
+	{SEC_CMD("run_hfdnd_h_gap_read", v8_run_hfdnd_h_gap_read),},
+	{SEC_CMD("get_hfdnd_h_gap", v8_get_hfdnd_h_gap),},
+	{SEC_CMD("run_gapjitter_read", v8_run_gapjitter_read),},
+	{SEC_CMD("get_gapjitter", v8_get_gapjitter),},
+	{SEC_CMD("hfdnd_spec_adjust", v8_hfdnd_spec_adjust),},
+	{SEC_CMD("clear_reference_data", v8_clear_reference_data),},
+	{SEC_CMD("run_force_calibration", v8_run_force_calibration),},
 #ifdef PAT_CONTROL
-	{SEC_CMD("get_pat_information", get_pat_information),},
-	{SEC_CMD("get_calibration_nv_data", get_calibration_nv_data),},
-	{SEC_CMD("get_tune_fix_ver_data", get_tune_fix_ver_data),},
-	{SEC_CMD("set_calibration_nv_data", set_calibration_nv_data),},
-	{SEC_CMD("set_tune_fix_ver_data", set_tune_fix_ver_data),},
+	{SEC_CMD("get_pat_information", v8_get_pat_information),},
+	{SEC_CMD("get_calibration_nv_data", v8_get_calibration_nv_data),},
+	{SEC_CMD("get_tune_fix_ver_data", v8_get_tune_fix_ver_data),},
+	{SEC_CMD("set_calibration_nv_data", v8_set_calibration_nv_data),},
+	{SEC_CMD("set_tune_fix_ver_data", v8_set_tune_fix_ver_data),},
 #endif
-	{SEC_CMD("dead_zone_enable", dead_zone_enable),},
-	{SEC_CMD("run_mis_cal_read", run_mis_cal_read),},
-	{SEC_CMD("get_mis_cal", get_mis_cal),},
+	{SEC_CMD("dead_zone_enable", v8_dead_zone_enable),},
+	{SEC_CMD("run_mis_cal_read", v8_run_mis_cal_read),},
+	{SEC_CMD("get_mis_cal", v8_get_mis_cal),},
+	{SEC_CMD("force_recover", v8_force_recover),},
+	{SEC_CMD("get_watchdog_status", get_watchdog_status),},
+	{SEC_CMD("set_auto_recover", v8_set_auto_recover),},
+	{SEC_CMD("get_touch_health", get_touch_health),},
 };
 #endif
 
@@ -591,6 +657,27 @@ struct bt541_ts_platform_data {
 
 };
 
+/* V8 diagnostics: counters survive recovery; cached fields use this lock. */
+struct bt541_touch_health {
+	spinlock_t lock;
+	atomic_t irq;
+	atomic_t invalid_gpio;
+	atomic_t lock_busy;
+	atomic_t state_busy;
+	atomic_t coord_recovery;
+	atomic_t heartbeat;
+	atomic_t nonzero_packet;
+	atomic_t contacts;
+	atomic_t sync;
+	atomic_t invalid_coord;
+	struct point_info packet;
+	u16 packet_mode;
+	u64 last_packet_jiffies;
+	u64 last_contact_jiffies;
+	bool packet_valid;
+	bool contact_valid;
+};
+
 struct bt541_ts_info {
 	struct i2c_client			*client;
 	struct input_dev			*input_dev;
@@ -607,11 +694,31 @@ struct bt541_ts_info {
 	u8					button[MAX_SUPPORTED_BUTTON_NUM];
 	u8					work_state;
 	struct semaphore			work_lock;
+	struct bt541_touch_health		health;
 #if ESD_TIMER_INTERVAL
 	struct work_struct			tmr_work;
 	struct timer_list			esd_timeout_tmr;
 	struct timer_list			*p_esd_timeout_tmr;
 	spinlock_t				lock;
+	struct mutex v8_control_lock;
+	struct delayed_work v8_work;
+	bool v8_stopping;
+	bool v8_ready;
+	bool v8_busy;
+	bool v8_auto_enabled;
+	bool v8_cooldown_valid;
+	atomic_t v8_screen_on;
+	struct notifier_block v8_fb;
+	bool v8_fb_registered;
+	struct device *v8_factory_tk_dev;
+	struct device *v8_sec_pretest_dev;
+	bool v8_sec_initialized;
+	bool v8_factory_tk_group_created;
+	struct file *v8_raw_owner;
+	unsigned long v8_last_point, v8_next_recovery;
+	u32 v8_point_seq, v8_probe_seq;
+	bool v8_suspect;
+	u32 v8_checks, v8_recoveries, v8_attempts, v8_errors, v8_peak;
 #endif
 #ifdef CONFIG_HAS_EARLYSUSPEND
 	struct early_suspend			early_suspend;
@@ -705,19 +812,21 @@ static s32 i2c_dma_write_mtk(struct bt541_ts_info *info, u8 *buffer, s32 len)
 
 		msg.len = transfer_length + GTP_ADDR_LENGTH;
 		//if (!info->is_lpm_suspend) {/*workround log too much*/
+		/* LineageOS: require complete DMA write transfer. */
+		count = 0;
 retry:
-			ret = i2c_transfer(info->client->adapter, &msg, 1);
-			if (ret < 0) {
-			input_err(true, &info->client->dev, "%s I2c Transfer error! ", __func__);
-				if (++count < 3)
-					goto retry;
-				ret = ERROR_IIC;
-				break;
+		ret = i2c_transfer(info->client->adapter, &msg, 1);
+		if (ret != 1) {
+			if (++count < 3) {
+				usleep_range(200, 200);
+				goto retry;
 			}
-		//} else {
-		//	ret = ERROR_IIC;
-		//	break;
-		//}
+			input_err(true, &info->client->dev,
+					"%s I2C DMA write failed (ret=%d)\n",
+					__func__, ret);
+			ret = ERROR_IIC;
+			break;
+		}
 		ret = 0;
 		pos += transfer_length;
 		address += transfer_length;
@@ -765,25 +874,36 @@ static s32 i2c_dma_read_mtk(struct bt541_ts_info *info ,char *write_buf, unsigne
 		msgs[0].buf[0] = (address >> 8) & 0xFF;
 		msgs[0].buf[1] = address & 0xFF;
 		msgs[1].len = transfer_length;
+		/* LineageOS: retry complete DMA register read transaction. */
+		count = 0;
 retry:
 		ret = i2c_transfer(info->client->adapter, &msgs[0], 1);
-		if (ret < 0) {
-			input_err(true, &info->client->dev, "%s I2C Transfer error!", __func__);
-			if (++count < 3)
+		if (ret != 1) {
+			if (++count < 3) {
+				usleep_range(200, 200);
 				goto retry;
+			}
+			input_err(true, &info->client->dev,
+					"%s I2C DMA address phase failed (ret=%d)\n",
+					__func__, ret);
 			ret = ERROR_IIC;
 			goto out;
 		}
 
 		usleep_range(200, 200);
-
 		ret = i2c_transfer(info->client->adapter, &msgs[1], 1);
-		if (ret < 0) {
-			input_err(true, &info->client->dev, "%s I2C Transfer error!", __func__);
+		if (ret != 1) {
+			if (++count < 3) {
+				usleep_range(200, 200);
+				goto retry;
+			}
+			input_err(true, &info->client->dev,
+					"%s I2C DMA data phase failed (ret=%d)\n",
+					__func__, ret);
 			ret = ERROR_IIC;
-			break;
+			goto out;
 		}
-		
+
 		ret = 0;
 		memcpy(&buffer[pos], gpDMABuf_va, transfer_length);
 		pos += transfer_length;
@@ -822,7 +942,7 @@ retry:
 	/* select register*/
 	ret = i2c_master_send(client , (u8 *)&reg , 2);
 	if (ret < 0) {
-		usleep_range(HZ, HZ);
+		usleep_range(BT541_USEC_PER_MSEC, BT541_USEC_PER_MSEC);
 		if (++count < 8)
 			goto retry;
 
@@ -859,7 +979,7 @@ static inline s32 write_data(struct i2c_client *client,
 retry:
 	ret = i2c_master_send(client , pkt , length + 2);
 	if (ret < 0) {
-		usleep_range(HZ, HZ);
+		usleep_range(BT541_USEC_PER_MSEC, BT541_USEC_PER_MSEC);
 
 		if (++count < 8)
 			goto retry;
@@ -897,7 +1017,7 @@ static inline s32 write_cmd(struct i2c_client *client, u16 reg)
 retry:
 	ret = i2c_master_send(client , (u8 *)&reg , 2);
 	if (ret < 0) {
-		usleep_range(HZ, HZ);
+		usleep_range(BT541_USEC_PER_MSEC, BT541_USEC_PER_MSEC);
 
 		if (++count < 8)
 			goto retry;
@@ -926,7 +1046,7 @@ retry:
 	/* select register */
 	ret = i2c_master_send(client , (u8 *)&reg , 2);
 	if (ret < 0) {
-		usleep_range(HZ, HZ);
+		usleep_range(BT541_USEC_PER_MSEC, BT541_USEC_PER_MSEC);
 
 		if (++count < 8)
 			goto retry;
@@ -962,7 +1082,7 @@ static inline s32 read_firmware_data(struct i2c_client *client,
 		return ret;
 
 	/* for setup tx transaction. */
-	usleep_range(HZ, HZ);
+	usleep_range(BT541_USEC_PER_MSEC, BT541_USEC_PER_MSEC);
 
 	ret = i2c_master_recv(client , values , length);
 	if (ret < 0)
@@ -1032,6 +1152,7 @@ static struct miscdevice touch_misc_device = {
 #define TOUCH_IOCTL_DONOT_TOUCH_EVENT		_IOW(TOUCH_IOCTL_BASE, 19, int)
 
 struct bt541_ts_info *misc_info;
+static DEFINE_MUTEX(bt541_device_lock);
 
 static u16 m_optional_mode = 0;
 static u16 m_prev_optional_mode = 0;
@@ -1048,65 +1169,346 @@ static void bt541_set_optional_mode(struct bt541_ts_info *info, bool force)
 }
 
 #define I2C_BUFFER_SIZE 64
-static bool get_raw_data(struct bt541_ts_info *info, u8 *buff, int skip_cnt)
+/*
+ * Integration fragment for bt541_ts.c, base SHA-256:
+ * f8ffdebedfe7d8f81b41fb1cb899c041aeccd8d34dd6322b48df82b6a2030dfd
+ *
+ * This is not a translation unit.  Insert the RAW helpers in place of the
+ * original get_raw_data(), the MODE helpers in place of all three original
+ * ts_set_touchmode*() functions, and replace get_raw_data_size() with the
+ * final wrapper.  No watchdog policy is introduced here.
+ */
+
+/* BEGIN RAW HELPERS + get_raw_data REPLACEMENT */
+#define BT541_RAW_FRAME_TIMEOUT_MS 1000
+#define BT541_RAW_READY_TIMEOUT_MS 50
+#define BT541_RAW_MAX_SKIP_FRAMES 10
+
+static bool bt541_raw_dimensions_valid(struct bt541_ts_info *info)
 {
-	struct i2c_client *client = info->client;
-	struct bt541_ts_platform_data *pdata = info->pdata;
-	u32 total_node = info->cap_info.total_node_num;
-	s32 sz;
-	int i;
-	u32 temp_sz;
-	int retry = 1000;
+	u32 x = info->cap_info.x_node_num;
+	u32 y = info->cap_info.y_node_num;
+	u32 nodes;
 
-	down(&info->work_lock);
-	if (info->work_state != NOTHING) {
-		input_err(true, &info->client->dev, "other process occupied.. (%d)\n", info->work_state);
-		up(&info->work_lock);
+	if (!x || !y || x > MAX_RAW_DATA_SZ || y > MAX_RAW_DATA_SZ)
 		return false;
-	}
-
-	info->work_state = RAW_DATA;
-
-	for (i = 0; i < skip_cnt; i++) {
-		while (gpio_get_value(pdata->gpio_int) && retry-- > 0)
-			msleep(1);
-
-		write_cmd(client, BT541_CLEAR_INT_STATUS_CMD);
-		msleep(1);
-	}
-
-	input_info(true, &info->client->dev, "read raw data\r\n");
-	sz = total_node * 2;
-	retry = 50;
-	while (gpio_get_value(pdata->gpio_int) && retry-- > 0 )
-		msleep(1);
-	
-	if (retry < 0) {
-		input_info(true, &info->client->dev, "%s failed\n", __func__ );
-		info->work_state = NOTHING;
-		up(&info->work_lock);
+	nodes = x * y;
+	if (nodes > MAX_RAW_DATA_SZ || nodes != info->cap_info.total_node_num)
 		return false;
-	}
-	
-	for (i = 0; sz > 0; i++) {
-		temp_sz = I2C_BUFFER_SIZE;
-		if (sz < I2C_BUFFER_SIZE)
-			temp_sz = sz;
-		if (read_raw_data(client, BT541_RAWDATA_REG + i, 
-			(char *)(buff + (i * I2C_BUFFER_SIZE)), temp_sz) < 0) {
-			input_err(true, &misc_info->client->dev, "error : read zinitix tc raw data\n");
-			info->work_state = NOTHING;
-			up(&info->work_lock);
-			return false;
-		}
-		sz -= I2C_BUFFER_SIZE;
-	}
-	write_cmd(client, BT541_CLEAR_INT_STATUS_CMD);
-	info->work_state = NOTHING;
-	up(&info->work_lock);
-
+#ifdef CONFIG_SEC_FACTORY_TEST
+	/* Factory arrays and their specification tables have fixed dimensions. */
+	if (x > TSP_CMD_X_NUM || y > TSP_CMD_Y_NUM ||
+			nodes > TSP_CMD_NODE_NUM)
+		return false;
+#endif
 	return true;
 }
+
+static bool bt541_wait_raw_ready(struct bt541_ts_info *info,
+		unsigned int timeout_ms)
+{
+	unsigned int elapsed;
+
+	for (elapsed = 0; elapsed < timeout_ms; elapsed++) {
+		if (!gpio_get_value(info->pdata->gpio_int))
+			return true;
+		msleep(1);
+	}
+	return !gpio_get_value(info->pdata->gpio_int);
+}
+
+/*
+ * requested_bytes == 0 selects one complete node matrix.  The buffer stays
+ * unchanged on every error, including the final interrupt acknowledgement.
+ * Callers still have to check the return and restore POINT mode separately.
+ */
+static bool bt541_get_raw_data_common(struct bt541_ts_info *info, u8 *buff,
+		int skip_cnt, int requested_bytes, unsigned int capacity)
+{
+	u8 *staging;
+	unsigned int bytes, offset, block;
+	unsigned int chunk;
+	s32 ret;
+	int i;
+	bool ok = false;
+
+	if (!info || !buff || !capacity || requested_bytes < 0 ||
+			skip_cnt < 0 || skip_cnt > BT541_RAW_MAX_SKIP_FRAMES)
+		return false;
+	if (requested_bytes && ((requested_bytes & 1) ||
+			(unsigned int)requested_bytes > capacity))
+		return false;
+
+	staging = kmalloc(capacity, GFP_KERNEL);
+	if (!staging)
+		return false;
+
+	/* Balanced with factory callers which have already disabled this IRQ. */
+	disable_irq(info->irq);
+	down(&info->work_lock);
+	if (!info->enabled || info->work_state != NOTHING) {
+		input_err(true, &info->client->dev,
+				"raw read unavailable: enabled=%d state=%d\n",
+				info->enabled, info->work_state);
+		goto out_unlock;
+	}
+	if (!bt541_raw_dimensions_valid(info)) {
+		input_err(true, &info->client->dev,
+				"raw read rejected invalid dimensions %u x %u, total=%u\n",
+				info->cap_info.x_node_num, info->cap_info.y_node_num,
+				info->cap_info.total_node_num);
+		goto out_unlock;
+	}
+	bytes = requested_bytes ? (unsigned int)requested_bytes :
+			(unsigned int)info->cap_info.total_node_num * sizeof(s16);
+	if (!bytes || bytes > capacity)
+		goto out_unlock;
+
+	info->work_state = RAW_DATA;
+	for (i = 0; i < skip_cnt; i++) {
+		if (!bt541_wait_raw_ready(info, BT541_RAW_FRAME_TIMEOUT_MS)) {
+			input_err(true, &info->client->dev,
+					"raw read timeout discarding frame %d\n", i);
+			goto out_state;
+		}
+		if (write_cmd(info->client, BT541_CLEAR_INT_STATUS_CMD) !=
+				I2C_SUCCESS) {
+			input_err(true, &info->client->dev,
+					"raw read failed to acknowledge skipped frame\n");
+			goto out_state;
+		}
+		msleep(1);
+	}
+
+	if (!bt541_wait_raw_ready(info, BT541_RAW_READY_TIMEOUT_MS)) {
+		input_err(true, &info->client->dev,
+				"raw read timeout waiting for final frame\n");
+		goto out_state;
+	}
+
+	for (offset = 0, block = 0; offset < bytes; block++) {
+		chunk = min_t(unsigned int, I2C_BUFFER_SIZE, bytes - offset);
+		ret = read_raw_data(info->client, BT541_RAWDATA_REG + block,
+				staging + offset, chunk);
+#if TPD_SUPPORT_I2C_DMA
+		if (ret != I2C_SUCCESS) {
+#else
+		if (ret != chunk) {
+#endif
+			input_err(true, &info->client->dev,
+					"raw read failed at block %u (ret=%d)\n", block, ret);
+			goto out_state;
+		}
+		offset += chunk;
+	}
+	if (write_cmd(info->client, BT541_CLEAR_INT_STATUS_CMD) != I2C_SUCCESS) {
+		input_err(true, &info->client->dev,
+				"raw read failed to acknowledge final frame\n");
+		goto out_state;
+	}
+	memcpy(buff, staging, bytes);
+	ok = true;
+
+out_state:
+	info->work_state = NOTHING;
+out_unlock:
+	up(&info->work_lock);
+	enable_irq(info->irq);
+	kfree(staging);
+	return ok;
+}
+
+static bool get_raw_data(struct bt541_ts_info *info, u8 *buff, int skip_cnt)
+{
+#ifdef CONFIG_SEC_FACTORY_TEST
+	return bt541_get_raw_data_common(info, buff, skip_cnt, 0,
+			TSP_CMD_NODE_NUM * sizeof(s16));
+#else
+	return bt541_get_raw_data_common(info, buff, skip_cnt, 0,
+			MAX_RAW_DATA_SZ * sizeof(s16));
+#endif
+}
+/* END RAW HELPERS + get_raw_data REPLACEMENT */
+
+/* BEGIN MODE HELPERS + THREE ts_set_touchmode REPLACEMENTS */
+enum bt541_mode_variant {
+	BT541_MODE_STANDARD,
+	BT541_MODE_HFDND,
+	BT541_MODE_GAPJITTER,
+};
+
+static bool bt541_mode_write(struct bt541_ts_info *info, u16 reg, u16 value)
+{
+	if (write_reg(info->client, reg, value) == I2C_SUCCESS)
+		return true;
+	input_err(true, &info->client->dev,
+			"mode change: register 0x%04x write failed\n", reg);
+	return false;
+}
+
+static bool bt541_mode_clear_frames(struct bt541_ts_info *info)
+{
+	int i;
+
+	for (i = 0; i < 10; i++) {
+		/* Original nominal delay was 20 ms; do not use local HZ as a unit. */
+		msleep(20);
+		if (write_cmd(info->client, BT541_CLEAR_INT_STATUS_CMD) !=
+				I2C_SUCCESS) {
+			input_err(true, &info->client->dev,
+					"mode change: interrupt clear failed at frame %d\n", i);
+			return false;
+		}
+	}
+	return true;
+}
+
+/*
+ * Try every restoration write even after an earlier failure.  N_COUNT was
+ * changed by DND/HFDND too, so restore its saved normal value as well.
+ * The GAPJITTER variant keeps its original omission of SHIFT_VALUE writes.
+ */
+static bool bt541_mode_restore_normal(struct bt541_ts_info *info,
+		enum bt541_mode_variant variant)
+{
+	bool ok = true;
+
+	if (!bt541_mode_write(info, BT541_AFE_FREQUENCY,
+			info->cap_info.afe_frequency))
+		ok = false;
+	if (!bt541_mode_write(info, BT541_DND_U_COUNT, info->cap_info.U_cnt))
+		ok = false;
+	if (variant != BT541_MODE_GAPJITTER &&
+			!bt541_mode_write(info, BT541_SHIFT_VALUE,
+			info->cap_info.shift_value))
+		ok = false;
+	if (!bt541_mode_write(info, BT541_ISRC_CTRL, info->cap_info.isrc_ctrl))
+		ok = false;
+	if (!bt541_mode_write(info, BT541_DND_N_COUNT, info->cap_info.N_cnt))
+		ok = false;
+	return ok;
+}
+
+/* IRQ is masked and work_lock is held by the caller. */
+static bool bt541_set_touchmode_locked(struct bt541_ts_info *info, u16 value,
+		enum bt541_mode_variant variant)
+{
+	u16 mode = value == TOUCH_SEC_MODE ? TOUCH_POINT_MODE : value;
+	u16 old_mode = info->touch_mode;
+	bool test_tuning;
+	bool restored;
+	u16 n_count, u_count, frequency;
+
+	test_tuning = variant == BT541_MODE_GAPJITTER ?
+			mode == TOUCH_H_GAP_JITTER_MODE : mode == TOUCH_DND_MODE;
+	info->update = 0;
+
+	if (test_tuning) {
+		n_count = variant == BT541_MODE_STANDARD ?
+				SEC_DND_N_COUNT : SEC_HFDND_N_COUNT;
+		u_count = variant == BT541_MODE_STANDARD ?
+				SEC_DND_U_COUNT : SEC_HFDND_U_COUNT;
+		frequency = variant == BT541_MODE_STANDARD ?
+				SEC_DND_FREQUENCY : SEC_HFDND_FREQUENCY;
+		if (!bt541_mode_write(info, BT541_DND_N_COUNT, n_count) ||
+				!bt541_mode_write(info, BT541_DND_U_COUNT, u_count) ||
+				!bt541_mode_write(info, BT541_AFE_FREQUENCY, frequency) ||
+				!bt541_mode_write(info, BT541_ISRC_CTRL, SEC_ISRC_CTRL))
+			goto rollback;
+	} else if (variant != BT541_MODE_STANDARD ||
+			old_mode == TOUCH_DND_MODE ||
+			old_mode == TOUCH_H_GAP_JITTER_MODE) {
+		if (!bt541_mode_restore_normal(info, variant))
+			goto rollback;
+	}
+
+	if (mode != TOUCH_POINT_MODE &&
+			!bt541_mode_write(info, BT541_DELAY_RAW_FOR_HOST,
+			RAWDATA_DELAY_FOR_HOST))
+		goto rollback;
+	if (!bt541_mode_write(info, BT541_TOUCH_MODE, mode))
+		goto rollback;
+	if (!bt541_mode_clear_frames(info))
+		goto rollback;
+
+	/* Publish only a completed hardware transition. */
+	info->touch_mode = mode;
+	info->update = 0;
+	return true;
+
+rollback:
+	restored = bt541_mode_restore_normal(info, variant);
+	if (!bt541_mode_write(info, BT541_TOUCH_MODE, TOUCH_POINT_MODE))
+		restored = false;
+	if (!bt541_mode_clear_frames(info))
+		restored = false;
+	if (restored) {
+		info->touch_mode = TOUCH_POINT_MODE;
+		info->update = 0;
+	} else {
+		/* Leave the last confirmed mode cached; it is not hardware proof. */
+		input_err(true, &info->client->dev,
+				"mode change: POINT rollback failed, hardware state unknown\n");
+	}
+	return false;
+}
+
+static bool bt541_set_touchmode(struct bt541_ts_info *info, u16 value,
+		enum bt541_mode_variant variant)
+{
+	bool ok = false;
+
+	if (!info)
+		return false;
+	/* Also protects TOUCH_IOCTL_SET_RAW_DATA_MODE, whose caller has no mask. */
+	disable_irq(info->irq);
+	down(&info->work_lock);
+	if (!info->enabled || info->work_state != NOTHING) {
+		input_err(true, &info->client->dev,
+				"mode change unavailable: enabled=%d state=%d\n",
+				info->enabled, info->work_state);
+		goto out;
+	}
+	info->work_state = SET_MODE;
+	ok = bt541_set_touchmode_locked(info, value, variant);
+	info->work_state = NOTHING;
+out:
+	up(&info->work_lock);
+	enable_irq(info->irq);
+	return ok;
+}
+
+static bool ts_set_touchmode(u16 value)
+{
+	return bt541_set_touchmode(misc_info, value, BT541_MODE_STANDARD);
+}
+
+static bool ts_set_touchmode2(u16 value)
+{
+	return bt541_set_touchmode(misc_info, value, BT541_MODE_HFDND);
+}
+
+static bool ts_set_touchmode16(u16 value)
+{
+	return bt541_set_touchmode(misc_info, value, BT541_MODE_GAPJITTER);
+}
+/* END MODE HELPERS + THREE ts_set_touchmode REPLACEMENTS */
+
+/* BEGIN get_raw_data_size REPLACEMENT (within CONFIG_SEC_FACTORY_TEST) */
+#ifdef CONFIG_SEC_FACTORY_TEST
+static bool get_raw_data_size(struct bt541_ts_info *info, u8 *buff,
+		int skip_cnt, int sz)
+{
+	if (sz <= 0)
+		return false;
+	return bt541_get_raw_data_common(info, buff, skip_cnt, sz,
+			sizeof(((struct tsp_raw_data *)0)->reference_data));
+}
+#endif
+/* END get_raw_data_size REPLACEMENT */
+
+
+
 
 static bool ts_get_raw_data(struct bt541_ts_info *info)
 {
@@ -1291,55 +1693,27 @@ out:
 static void esd_timeout_handler(unsigned long data)
 {
 	struct bt541_ts_info *info = (struct bt541_ts_info *)data;
-
-	info->p_esd_timeout_tmr = NULL;
-	queue_work(esd_tmr_workqueue, &info->tmr_work);
+	if (READ_ONCE(info->v8_ready) && READ_ONCE(info->enabled) && !READ_ONCE(info->v8_stopping) &&
+			!READ_ONCE(info->v8_busy))
+		queue_work(esd_tmr_workqueue, &info->tmr_work);
 }
 
 static void esd_timer_start(u16 sec, struct bt541_ts_info *info)
 {
-	unsigned long flags;
-	spin_lock_irqsave(&info->lock,flags);
-	if (info->p_esd_timeout_tmr != NULL)
-#ifdef CONFIG_SMP
-		del_singleshot_timer_sync(info->p_esd_timeout_tmr);
-#else
-	del_timer(info->p_esd_timeout_tmr);
-#endif
-	info->p_esd_timeout_tmr = NULL;
-	init_timer(&(info->esd_timeout_tmr));
-	info->esd_timeout_tmr.data = (unsigned long)(info);
-	info->esd_timeout_tmr.function = esd_timeout_handler;
-	info->esd_timeout_tmr.expires = jiffies + (HZ * sec);
-	info->p_esd_timeout_tmr = &info->esd_timeout_tmr;
-	add_timer(&info->esd_timeout_tmr);
-	spin_unlock_irqrestore(&info->lock, flags);
+	if (READ_ONCE(info->v8_ready) && READ_ONCE(info->enabled) && !READ_ONCE(info->v8_stopping) &&
+			!READ_ONCE(info->v8_busy))
+		mod_timer(&info->esd_timeout_tmr,
+			jiffies + msecs_to_jiffies((unsigned int)sec * 1000U));
 }
 
 static void esd_timer_stop(struct bt541_ts_info *info)
 {
-	unsigned long flags;
-	spin_lock_irqsave(&info->lock,flags);
-	if (info->p_esd_timeout_tmr)
-#ifdef CONFIG_SMP
-		del_singleshot_timer_sync(info->p_esd_timeout_tmr);
-#else
-	del_timer(info->p_esd_timeout_tmr);
-#endif
-
-	info->p_esd_timeout_tmr = NULL;
-	spin_unlock_irqrestore(&info->lock, flags);
+	del_timer_sync(&info->esd_timeout_tmr);
 }
 
 static void esd_timer_init(struct bt541_ts_info *info)
 {
-	unsigned long flags;
-	spin_lock_irqsave(&info->lock,flags);
-	init_timer(&(info->esd_timeout_tmr));
-	info->esd_timeout_tmr.data = (unsigned long)(info);
-	info->esd_timeout_tmr.function = esd_timeout_handler;
-	info->p_esd_timeout_tmr = NULL;
-	spin_unlock_irqrestore(&info->lock, flags);
+	setup_timer(&info->esd_timeout_tmr, esd_timeout_handler, (unsigned long)info);
 }
 
 static void ts_tmr_work(struct work_struct *work)
@@ -1352,10 +1726,26 @@ static void ts_tmr_work(struct work_struct *work)
 	input_info(true, &client->dev, "tmr queue work ++\n");
 #endif
 
+	if (!READ_ONCE(info->enabled) || READ_ONCE(info->v8_stopping) ||
+			READ_ONCE(info->v8_busy))
+		return;
+
 	if (down_trylock(&info->work_lock)) {
 		input_err(true, &client->dev, "%s: Failed to occupy work lock\n", __func__);
-		esd_timer_start(CHECK_ESD_TIMER, info);
 
+		/* LineageOS: do not rearm ESD while suspend/remove owns work_lock. */
+		if (info->enabled &&
+				info->work_state != EALRY_SUSPEND &&
+				info->work_state != SUSPEND &&
+				info->work_state != REMOVE)
+			esd_timer_start(CHECK_ESD_TIMER, info);
+
+		return;
+	}
+
+	if (!READ_ONCE(info->enabled) || READ_ONCE(info->v8_stopping) ||
+			READ_ONCE(info->v8_busy)) {
+		up(&info->work_lock);
 		return;
 	}
 
@@ -1382,6 +1772,10 @@ static void ts_tmr_work(struct work_struct *work)
 		input_info(true, &client->dev, "ium_lock\n", __func__);
 
 	info->work_state = ESD_TIMER;
+	info->touch_mode = TOUCH_POINT_MODE;
+	info->update = 0;
+	info->v8_point_seq++;
+	info->v8_last_point = jiffies;
 
 	disable_irq(info->irq);
 	bt541_power_control(info, POWER_OFF);
@@ -1401,7 +1795,9 @@ static void ts_tmr_work(struct work_struct *work)
 	return;
 fail_time_out_init:
 	input_err(true, &client->dev, "%s: Failed to restart\n", __func__);
-	esd_timer_start(CHECK_ESD_TIMER, info);
+	/* LineageOS: do not resurrect ESD after suspend started. */
+	if (info->enabled)
+		esd_timer_start(CHECK_ESD_TIMER, info);
 	info->work_state = NOTHING;
 	enable_irq(info->irq);
 	up(&info->work_lock);
@@ -1409,6 +1805,78 @@ fail_time_out_init:
 	return;
 }
 #endif
+
+
+/*
+ * V6: recover a half-alive BT541 without unregistering the input/I2C
+ * device. The reproduced failure still answers I2C/raw-data requests and
+ * keeps the periodic ESD interrupt alive, while point events disappear.
+ *
+ * Do not automatically reset on status == 0: the BT541 uses zero-status
+ * periodic interrupts during normal idle too.
+ */
+static bool bt541_v8_recover_locked(struct bt541_ts_info *info,
+		const char *reason)
+{
+	bool off_ok, on_ok, ok = false;
+
+	/* IRQ is disabled and work_lock is held by the caller. */
+	info->v8_suspect = false;
+	info->v8_point_seq++;
+	info->v8_last_point = jiffies;
+	clear_report_data(info);
+	info->touch_mode = TOUCH_POINT_MODE;
+	info->update = 0;
+	input_info(true, &info->client->dev, "BT541 V8 recovery: %s\n", reason);
+	off_ok = bt541_power_control(info, POWER_OFF);
+	on_ok = bt541_power_control(info, POWER_ON_SEQUENCE);
+	if (on_ok)
+		ok = mini_init_touch(info);
+	return off_ok && on_ok && ok;
+}
+
+static bool bt541_force_recovery(struct bt541_ts_info *info,
+		const char *reason)
+{
+	bool ok = false;
+
+	if (!info || !info->input_dev || !info->enabled || info->v8_stopping)
+		return false;
+	WRITE_ONCE(info->v8_busy, true);
+	disable_irq(info->irq);
+	esd_timer_stop(info);
+	cancel_work_sync(&info->tmr_work);
+	esd_timer_stop(info);
+	if (down_trylock(&info->work_lock))
+		goto out_irq;
+	if (info->work_state == NOTHING) {
+		info->work_state = ESD_TIMER;
+		ok = bt541_v8_recover_locked(info, reason);
+		info->work_state = NOTHING;
+	}
+	up(&info->work_lock);
+out_irq:
+	WRITE_ONCE(info->v8_busy, false);
+	enable_irq(info->irq);
+	esd_timer_start(CHECK_ESD_TIMER, info);
+	return ok;
+}
+
+
+
+
+
+/*
+ * Learn only from consecutive idle heartbeat packets.
+ *
+ * Any real point packet resets the learning window.  This prevents normal
+ * touch activity from falsely proving that time_stamp is an idle liveness
+ * counter.
+ */
+
+
+
+
 
 static bool bt541_power_sequence(struct bt541_ts_info *info)
 {
@@ -1441,13 +1909,13 @@ retry_power_sequence:
 		input_err(true, &client->dev, "Failed to send power sequence(nvm init)\n");
 		goto fail_power_sequence;
 	}
-	usleep_range(2*HZ, 2*HZ);
+	usleep_range(2*BT541_USEC_PER_MSEC, 2*BT541_USEC_PER_MSEC);
 
 	if (write_reg(client, 0xc001, 0x0001) != I2C_SUCCESS) {
 		input_err(true, &client->dev, "Failed to send power sequence(program start)\n");
 		goto fail_power_sequence;
 	}
-	usleep_range(FIRMWARE_ON_DELAY*HZ, FIRMWARE_ON_DELAY*HZ);	/* wait for checksum cal */
+	usleep_range(FIRMWARE_ON_DELAY*BT541_USEC_PER_MSEC, FIRMWARE_ON_DELAY*BT541_USEC_PER_MSEC);	/* wait for checksum cal */
 
 	if (write_reg(client, 0x002E, IUM_SET_TIMEOUT) != I2C_SUCCESS)
 		input_err(true, &client->dev, "%s: failed to set ium timeout\n", __func__);
@@ -1456,7 +1924,7 @@ retry_power_sequence:
 
 fail_power_sequence:
 	if (retry++ < 3) {
-		usleep_range(CHIP_ON_DELAY*HZ, CHIP_ON_DELAY*HZ);
+		usleep_range(CHIP_ON_DELAY*BT541_USEC_PER_MSEC, CHIP_ON_DELAY*BT541_USEC_PER_MSEC);
 		input_info(true, &client->dev, "retry = %d\n", retry);
 		goto retry_power_sequence;
 	}
@@ -1473,9 +1941,9 @@ static int bt541_power(struct bt541_ts_info *info, int enable)
 	if (info->pdata->vdd_en_flag) {
 		gpio_direction_output(info->pdata->gpio_ldo_en, enable);
 		if(enable == 0)
-			usleep_range(CHIP_OFF_DELAY*HZ, CHIP_OFF_DELAY*HZ);
+			usleep_range(CHIP_OFF_DELAY*BT541_USEC_PER_MSEC, CHIP_OFF_DELAY*BT541_USEC_PER_MSEC);
 		else
-			usleep_range(CHIP_ON_DELAY*HZ, CHIP_ON_DELAY*HZ);
+			usleep_range(CHIP_ON_DELAY*BT541_USEC_PER_MSEC, CHIP_ON_DELAY*BT541_USEC_PER_MSEC);
 		input_info(true, &client->dev, "%s gpio_direction_ouput:%d\n", __func__, enable);
 	}
 
@@ -1488,7 +1956,7 @@ static int bt541_power(struct bt541_ts_info *info, int enable)
 						"failed  (%d)\n", __func__, ret);
 					return -EIO;
 				}
-				usleep_range(CHIP_ON_DELAY*HZ, CHIP_ON_DELAY*HZ);
+				usleep_range(CHIP_ON_DELAY*BT541_USEC_PER_MSEC, CHIP_ON_DELAY*BT541_USEC_PER_MSEC);
 				input_info(true, &client->dev, "%s power on\n", __func__);
 
 			} else {
@@ -1502,7 +1970,7 @@ static int bt541_power(struct bt541_ts_info *info, int enable)
 						"failed (%d)\n", __func__, ret);
 					return -EIO;
 				}
-				usleep_range(CHIP_ON_DELAY*HZ, CHIP_ON_DELAY*HZ);
+				usleep_range(CHIP_ON_DELAY*BT541_USEC_PER_MSEC, CHIP_ON_DELAY*BT541_USEC_PER_MSEC);
 				input_info(true, &client->dev, "%s power off\n", __func__);
 
 			} else {
@@ -1593,18 +2061,18 @@ void set_tsp_nvm_data(struct bt541_ts_info *info, u8 addr, u8 data)
 		goto fail_ium_random_write;
 	}
 	
-	usleep_range(10*HZ, 10*HZ);
+	usleep_range(10*BT541_USEC_PER_MSEC, 10*BT541_USEC_PER_MSEC);
 
 	if (write_cmd(client, 0xF0F8) != I2C_SUCCESS) {
 		input_err(true, &client->dev, "failed save ium\n", __func__);
 		goto fail_ium_random_write;
 	}
-	usleep_range(30*HZ, 30*HZ);
+	usleep_range(30*BT541_USEC_PER_MSEC, 30*BT541_USEC_PER_MSEC);
 
 	if (write_reg(client, 0xc104, 0x0000) != I2C_SUCCESS) {
 		input_err(true, &client->dev, "nvm wp enable\n", __func__);
 	}
-	usleep_range(10*HZ, 10*HZ);
+	usleep_range(10*BT541_USEC_PER_MSEC, 10*BT541_USEC_PER_MSEC);
 
 	return;
 
@@ -1612,7 +2080,7 @@ fail_ium_random_write:
 	if (write_reg(client, 0xc104, 0x0000) != I2C_SUCCESS) {
 		input_err(true, &client->dev, "nvm wp enable\n");
 	}
-	usleep_range(10*HZ, 10*HZ);
+	usleep_range(10*BT541_USEC_PER_MSEC, 10*BT541_USEC_PER_MSEC);
 
 	bt541_power_control(info, POWER_OFF);
 	bt541_power_control(info, POWER_ON_SEQUENCE);
@@ -1710,18 +2178,18 @@ static void ium_random_write(struct bt541_ts_info *info)
 		input_err(true, &client->dev, "failed to write nvm wp disable\n");
 		goto fail_ium_random_write;
 	}
-	usleep_range(10*HZ, 10*HZ);
+	usleep_range(10*BT541_USEC_PER_MSEC, 10*BT541_USEC_PER_MSEC);
 
 	if (write_cmd(client, 0xF0F8) != I2C_SUCCESS) {
 		input_err(true, &client->dev, "failed save ium\n");
 		goto fail_ium_random_write;
 	}
-	usleep_range(30*HZ, 30*HZ);
+	usleep_range(30*BT541_USEC_PER_MSEC, 30*BT541_USEC_PER_MSEC);
 
 	if (write_reg(client, 0xc104, 0x0000) != I2C_SUCCESS) {
 		input_err(true, &client->dev, "nvm wp enable\n");
 	}
-	usleep_range(10*HZ, 10*HZ);
+	usleep_range(10*BT541_USEC_PER_MSEC, 10*BT541_USEC_PER_MSEC);
 //////////for save rom end
 
 	enable_irq(info->irq);
@@ -1731,7 +2199,7 @@ fail_ium_random_write:
 	if (write_reg(client, 0xc104, 0x0000) != I2C_SUCCESS) {
 		input_err(true, &client->dev, "nvm wp enable\n");
 	}
-	usleep_range(10*HZ, 10*HZ);
+	usleep_range(10*BT541_USEC_PER_MSEC, 10*BT541_USEC_PER_MSEC);
 
 	bt541_power_control(info, POWER_OFF);
 	bt541_power_control(info, POWER_ON_SEQUENCE);
@@ -1802,7 +2270,7 @@ static void ium_write(struct bt541_ts_info *info)
 	
 	bt541_power_control(info, POWER_OFF);
 	bt541_power_control(info, POWER_ON);
-	musleep_range(10*HZ, 10*HZ);
+	musleep_range(10*BT541_USEC_PER_MSEC, 10*BT541_USEC_PER_MSEC);
 
 	if (write_reg(client, 0xc000, 0x0001) != I2C_SUCCESS) {
 		input_err(true, &client->dev, "power sequence error (vendor cmd enable)\n");
@@ -1823,7 +2291,7 @@ static void ium_write(struct bt541_ts_info *info)
 		goto fail_ium_write;
 	}
 
-	usleep_range(5*HZ, 5*HZ);
+	usleep_range(5*BT541_USEC_PER_MSEC, 5*BT541_USEC_PER_MSEC);
 
 	input_info(true, &client->dev, "init flash\n");
 
@@ -1836,7 +2304,7 @@ static void ium_write(struct bt541_ts_info *info)
 		input_err(true, &client->dev, "nvm wp enable\n");
 		goto fail_ium_write;
 	}
-	usleep_range(10*HZ, 10*HZ);
+	usleep_range(10*BT541_USEC_PER_MSEC, 10*BT541_USEC_PER_MSEC);
 	
 	if (write_cmd(client, BT541_INIT_FLASH) != I2C_SUCCESS) {
 		input_err(true, &client->dev, "failed to init flash\n");
@@ -1851,7 +2319,7 @@ static void ium_write(struct bt541_ts_info *info)
 				input_err(true, &client->dev, "failed to write nvm wp disable\n");
 				goto fail_ium_write;
 			}
-			usleep_range(10*HZ, 10*HZ);
+			usleep_range(10*BT541_USEC_PER_MSEC, 10*BT541_USEC_PER_MSEC);
 		}
 		for (i = 0; i < page_sz / TC_SECTOR_SZ; i++) {
 			/*zinitix_debug_msg("write :addr=%04x, len=%d\n",	flash_addr, TC_SECTOR_SZ);*/
@@ -1866,7 +2334,7 @@ static void ium_write(struct bt541_ts_info *info)
 
 		}
 
-		usleep_range(30*HZ, 30*HZ); /*for fuzing delay*/
+		usleep_range(30*BT541_USEC_PER_MSEC, 30*BT541_USEC_PER_MSEC); /*for fuzing delay*/
 	}
 
 	if (write_reg(client, 0xc003, 0x0000) != I2C_SUCCESS) {
@@ -1880,7 +2348,7 @@ fail_ium_write:
 	if (write_reg(client, 0xc104, 0x0000) != I2C_SUCCESS) {
 		input_err(true, &client->dev, "nvm wp enable\n");
 	}
-	usleep_range(10*HZ, 10*HZ);
+	usleep_range(10*BT541_USEC_PER_MSEC, 10*BT541_USEC_PER_MSEC);
 
 	bt541_power_control(info, POWER_OFF);
 	bt541_power_control(info, POWER_ON_SEQUENCE);
@@ -1906,7 +2374,7 @@ static void ium_read(struct bt541_ts_info *info)
 
 	bt541_power_control(info, POWER_OFF);
 	bt541_power_control(info, POWER_ON);
-	usleep_range(10*HZ, 10*HZ);
+	usleep_range(10*BT541_USEC_PER_MSEC, 10*BT541_USEC_PER_MSEC);
 
 	if (write_reg(client, 0xc000, 0x0001) != I2C_SUCCESS) {
 		input_err(true, &client->dev, "power sequence error (vendor cmd enable)\n");
@@ -1927,7 +2395,7 @@ static void ium_read(struct bt541_ts_info *info)
 		goto fail_ium_read;
 	}
 
-	usleep_range(5*HZ, 5*HZ);
+	usleep_range(5*BT541_USEC_PER_MSEC, 5*BT541_USEC_PER_MSEC);
 
 	input_info(true, &client->dev,"init flash\n");
 
@@ -2073,7 +2541,7 @@ static u8 ts_upgrade_firmware(struct bt541_ts_info *info,
 retry_upgrade:
 	bt541_power_control(info, POWER_OFF);
 	bt541_power_control(info, POWER_ON);
-	usleep_range(10*HZ, 10*HZ);
+	usleep_range(10*BT541_USEC_PER_MSEC, 10*BT541_USEC_PER_MSEC);
 
 	if (write_reg(client, 0xc000, 0x0001) != I2C_SUCCESS) {
 		input_err(true, &client->dev, "power sequence error (vendor cmd enable)\n");
@@ -2115,7 +2583,7 @@ retry_upgrade:
 		goto fail_upgrade;
 	}
 
-	usleep_range(5*HZ, 5*HZ);
+	usleep_range(5*BT541_USEC_PER_MSEC, 5*BT541_USEC_PER_MSEC);
 
 	input_info(true, &client->dev, "init flash\n");
 
@@ -2144,7 +2612,7 @@ retry_upgrade:
 				input_err(true, &client->dev, "nvm wp enable\n");
 				goto fail_upgrade;
 			}
-			usleep_range(10*HZ, 10*HZ);
+			usleep_range(10*BT541_USEC_PER_MSEC, 10*BT541_USEC_PER_MSEC);
 			for (i = 0; i < page_sz / TC_SECTOR_SZ; i++) {
 				/*zinitix_debug_msg("write :addr=%04x, len=%d\n",	flash_addr, TC_SECTOR_SZ);*/
 				/*zinitix_printk(KERN_INFO "writing :addr = %04x, len=%d \n", flash_addr, TC_SECTOR_SZ);*/
@@ -2162,7 +2630,7 @@ retry_upgrade:
 				input_err(true, &client->dev, "failed to write nvm wp disable\n");
 				goto fail_upgrade;
 			}
-			usleep_range(10*HZ, 10*HZ);
+			usleep_range(10*BT541_USEC_PER_MSEC, 10*BT541_USEC_PER_MSEC);
 		}
 		else
 #endif
@@ -2235,7 +2703,7 @@ retry_upgrade:
 		for (i = 0; i < 5; i++) {
 			if (read_data(client, BT541_CHECKSUM_RESULT,
 					(u8 *)&reg_val, 2) < 0) {
-				usleep_range(10*HZ, 10*HZ);
+				usleep_range(10*BT541_USEC_PER_MSEC, 10*BT541_USEC_PER_MSEC);
 				continue;
 			}
 		}
@@ -2336,13 +2804,13 @@ static bool ts_hw_calibration(struct bt541_ts_info *info)
 	
 	if (write_reg(client, BT541_TOUCH_MODE, 0x07) != I2C_SUCCESS)
 		return false;
-	usleep_range(10*HZ, 10*HZ);
+	usleep_range(10*BT541_USEC_PER_MSEC, 10*BT541_USEC_PER_MSEC);
 	write_cmd(client, BT541_CLEAR_INT_STATUS_CMD);
-	usleep_range(10*HZ, 10*HZ);
+	usleep_range(10*BT541_USEC_PER_MSEC, 10*BT541_USEC_PER_MSEC);
 	write_cmd(client, BT541_CLEAR_INT_STATUS_CMD);
 	msleep(50);
 	write_cmd(client, BT541_CLEAR_INT_STATUS_CMD);
-	usleep_range(10*HZ, 10*HZ);;
+	usleep_range(10*BT541_USEC_PER_MSEC, 10*BT541_USEC_PER_MSEC);;
 
 	if (write_cmd(client, BT541_CALIBRATE_CMD) != I2C_SUCCESS)
 		return false;
@@ -2350,7 +2818,7 @@ static bool ts_hw_calibration(struct bt541_ts_info *info)
 	if (write_cmd(client, BT541_CLEAR_INT_STATUS_CMD) != I2C_SUCCESS)
 		return false;
 
-	usleep_range(10*HZ, 10*HZ);
+	usleep_range(10*BT541_USEC_PER_MSEC, 10*BT541_USEC_PER_MSEC);
 	write_cmd(client, BT541_CLEAR_INT_STATUS_CMD);
 
 	/* wait for h/w calibration*/
@@ -2369,7 +2837,7 @@ static bool ts_hw_calibration(struct bt541_ts_info *info)
 
 		if (time_out++ == 4) {
 			write_cmd(client, BT541_CALIBRATE_CMD);
-			usleep_range(10*HZ, 10*HZ);
+			usleep_range(10*BT541_USEC_PER_MSEC, 10*BT541_USEC_PER_MSEC);
 			write_cmd(client, BT541_CLEAR_INT_STATUS_CMD);
 			input_err(true, &client->dev, "h/w calibration retry timeout.\n");
 		}
@@ -2431,7 +2899,7 @@ retry_init:
 		if (read_data(client, BT541_EEPROM_INFO_REG,
 					(u8 *)&chip_eeprom_info, 2) < 0) {
 			input_err(true, &client->dev, "Failed to read eeprom info(%d)\n", i);
-			usleep_range(10*HZ, 10*HZ);
+			usleep_range(10*BT541_USEC_PER_MSEC, 10*BT541_USEC_PER_MSEC);
 			continue;
 		} else
 			break;
@@ -2448,7 +2916,7 @@ retry_init:
 	for (i = 0; i < INIT_RETRY_CNT; i++) {
 		if (read_data(client, BT541_CHECKSUM_RESULT,
 					(u8 *)&chip_check_sum, 2) < 0) {
-			usleep_range(10*HZ, 10*HZ);
+			usleep_range(10*BT541_USEC_PER_MSEC, 10*BT541_USEC_PER_MSEC);
 			continue;
 		}
 
@@ -2936,6 +3404,7 @@ static bool mini_init_touch(struct bt541_ts_info *info)
 #endif
 
 	input_info(true, &client->dev, "Successfully mini initialized\r\n");
+
 	return true;
 
 fail_mini_init:
@@ -2956,6 +3425,7 @@ fail_mini_init:
 	input_info(true, &client->dev, "Started esd timer\n");
 #endif
 #endif
+
 	return true;
 #else
 	return false;
@@ -3034,12 +3504,409 @@ static void clear_report_data(struct bt541_ts_info *info)
 			}
 		}
 		info->reported_touch_info.coord[i].sub_status = 0;
+		info->sec_point_info[i].finger_state = 0;
+		info->sec_point_info[i].move_count = 0;
 		info->touch_count = 0;
 	}
 
 	if (reported)
 		input_sync(info->input_dev);
 }
+
+/*
+ * V8 experimental DELTA watchdog.
+ * Recovery requires v8_control_lock + work_lock with the device IRQ disabled.
+ *
+ * v8_checks counts complete three-frame rounds with successful POINT restore.
+ * v8_attempts counts every automatic reset attempt, including restore repair.
+ * v8_recoveries counts successful automatic resets, including restore repair.
+ * v8_errors counts failed rounds/restores and failed recovery attempts.
+ * v8_peak is the peak of the most recent valid round; zero after a failed one.
+ */
+#define BT541_V8_INTERVAL_MS          30000U
+#define BT541_V8_QUIET_MS             10000U
+#define BT541_V8_CONFIRM_MS            2000U
+#define BT541_V8_COOLDOWN_MS         120000U
+#define BT541_V8_FRAME_TIMEOUT_MS       250U
+#define BT541_V8_ROUND_TIMEOUT_MS      1500U
+#define BT541_V8_DELTA_THRESHOLD        500
+
+static bool bt541_v8_can_run(struct bt541_ts_info *info)
+{
+	return READ_ONCE(info->v8_ready) && READ_ONCE(info->enabled) &&
+		!READ_ONCE(info->v8_stopping) &&
+		READ_ONCE(info->v8_auto_enabled) &&
+		atomic_read(&info->v8_screen_on);
+}
+
+static bool bt541_v8_contacts_active(struct bt541_ts_info *info)
+{
+	int i;
+
+	for (i = 0; i < MAX_SUPPORTED_FINGER_NUM; i++) {
+		if (zinitix_bit_test(READ_ONCE(
+				info->reported_touch_info.coord[i].sub_status),
+				SUB_BIT_EXIST))
+			return true;
+	}
+	for (i = 0; i < MAX_SUPPORTED_BUTTON_NUM; i++) {
+		if (READ_ONCE(info->button[i]) == ICON_BUTTON_DOWN)
+			return true;
+	}
+	return false;
+}
+
+/* Approximate before masking IRQ; authoritative when work_lock is held. */
+static bool bt541_v8_idle(struct bt541_ts_info *info)
+{
+	if (!bt541_v8_can_run(info) ||
+			READ_ONCE(info->touch_mode) != TOUCH_POINT_MODE ||
+			READ_ONCE(info->work_state) != NOTHING ||
+			bt541_v8_contacts_active(info))
+		return false;
+	if (time_before(jiffies, READ_ONCE(info->v8_last_point) +
+			msecs_to_jiffies(BT541_V8_QUIET_MS)))
+		return false;
+	if (info->v8_suspect &&
+			READ_ONCE(info->v8_point_seq) != info->v8_probe_seq)
+		return false;
+	return true;
+}
+
+static bool bt541_v8_in_cooldown(struct bt541_ts_info *info)
+{
+	return info->v8_cooldown_valid &&
+		time_before(jiffies, info->v8_next_recovery);
+}
+
+static void bt541_v8_reschedule(struct bt541_ts_info *info,
+		unsigned int delay_ms)
+{
+	if (bt541_v8_can_run(info))
+		schedule_delayed_work(&info->v8_work,
+				msecs_to_jiffies(delay_ms));
+}
+
+static int bt541_v8_sample_guard(struct bt541_ts_info *info,
+		unsigned long deadline)
+{
+	if (!bt541_v8_can_run(info))
+		return -ECANCELED;
+	if (time_after_eq(jiffies, deadline))
+		return -ETIMEDOUT;
+	return 0;
+}
+
+static unsigned long bt541_v8_frame_deadline(unsigned long round_deadline)
+{
+	unsigned long deadline = jiffies +
+		msecs_to_jiffies(BT541_V8_FRAME_TIMEOUT_MS);
+
+	return time_before(deadline, round_deadline) ? deadline : round_deadline;
+}
+
+static int bt541_v8_wait_gpio(struct bt541_ts_info *info, int level,
+		unsigned long deadline)
+{
+	int ret;
+
+	do {
+		ret = bt541_v8_sample_guard(info, deadline);
+		if (ret)
+			return ret;
+		if (!!gpio_get_value(info->pdata->gpio_int) == level)
+			return 0;
+		usleep_range(1000, 2000);
+	} while (time_before(jiffies, deadline));
+	return -ETIMEDOUT;
+}
+
+/* An observed deassertion separates the next ready frame from this one. */
+static int bt541_v8_ack_frame(struct bt541_ts_info *info,
+		unsigned long deadline)
+{
+	int ret = bt541_v8_sample_guard(info, deadline);
+
+	if (ret)
+		return ret;
+	if (write_cmd(info->client, BT541_CLEAR_INT_STATUS_CMD) != I2C_SUCCESS)
+		return -EIO;
+	return bt541_v8_wait_gpio(info, 1, deadline);
+}
+
+/* No nested locking, no legacy success-returning mode helper. */
+static int bt541_v8_set_mode_locked(struct bt541_ts_info *info, u16 mode,
+		unsigned long round_deadline)
+{
+	u16 actual = 0xffff;
+	int ret;
+
+	/* POINT cleanup must finish even if sampling timed out or screen went off. */
+	if (mode == TOUCH_DELTA_MODE) {
+		ret = bt541_v8_sample_guard(info, round_deadline);
+		if (ret)
+			return ret;
+	}
+
+	if (mode == TOUCH_DELTA_MODE &&
+			write_reg(info->client, BT541_DELAY_RAW_FOR_HOST,
+				RAWDATA_DELAY_FOR_HOST) != I2C_SUCCESS)
+		return -EIO;
+	if (mode == TOUCH_DELTA_MODE) {
+		ret = bt541_v8_sample_guard(info, round_deadline);
+		if (ret)
+			return ret;
+	}
+	if (write_reg(info->client, BT541_TOUCH_MODE, mode) != I2C_SUCCESS)
+		return -EIO;
+	msleep(20);
+	if (mode == TOUCH_DELTA_MODE) {
+		ret = bt541_v8_sample_guard(info, round_deadline);
+		if (ret)
+			return ret;
+	}
+	if (read_data(info->client, BT541_TOUCH_MODE,
+			(u8 *)&actual, sizeof(actual)) < 0 || actual != mode)
+		return -EIO;
+	info->touch_mode = mode;
+	if (mode == TOUCH_POINT_MODE) {
+		/* A new healthy point may reassert INT immediately: no high wait. */
+		return write_cmd(info->client, BT541_CLEAR_INT_STATUS_CMD) ==
+			I2C_SUCCESS ? 0 : -EIO;
+	}
+	return bt541_v8_ack_frame(info,
+			bt541_v8_frame_deadline(round_deadline));
+}
+
+/* All three frames must succeed; each vote uses a complete fresh matrix. */
+static int bt541_v8_sample_locked(struct bt541_ts_info *info,
+		s16 *samples, unsigned int nodes, bool *strong, u32 *peak)
+{
+	unsigned int frame, offset, bytes, chunk, node, magnitude;
+	unsigned int votes = 0;
+	unsigned long deadline;
+	unsigned long round_deadline = jiffies +
+		msecs_to_jiffies(BT541_V8_ROUND_TIMEOUT_MS);
+	u32 frame_peak;
+	int ret;
+
+	*strong = false;
+	*peak = 0;
+	ret = bt541_v8_set_mode_locked(info, TOUCH_DELTA_MODE, round_deadline);
+	if (ret)
+		return ret;
+
+	/* Discard two newly asserted frames after entering DELTA. */
+	for (frame = 0; frame < 2; frame++) {
+		deadline = bt541_v8_frame_deadline(round_deadline);
+		ret = bt541_v8_wait_gpio(info, 0, deadline);
+		if (ret)
+			return ret;
+		ret = bt541_v8_ack_frame(info, deadline);
+		if (ret)
+			return ret;
+	}
+
+	bytes = nodes * sizeof(*samples);
+	for (frame = 0; frame < 3; frame++) {
+		deadline = bt541_v8_frame_deadline(round_deadline);
+		ret = bt541_v8_wait_gpio(info, 0, deadline);
+		if (ret)
+			return ret;
+		for (offset = 0; offset < bytes; offset += chunk) {
+			ret = bt541_v8_sample_guard(info, deadline);
+			if (ret)
+				return ret;
+			chunk = min_t(unsigned int, I2C_BUFFER_SIZE,
+					bytes - offset);
+			if (read_raw_data(info->client,
+					BT541_RAWDATA_REG + offset / I2C_BUFFER_SIZE,
+					(u8 *)samples + offset, chunk) < 0)
+				return -EIO;
+		}
+		ret = bt541_v8_ack_frame(info, deadline);
+		if (ret)
+			return ret;
+
+		frame_peak = 0;
+		for (node = 0; node < nodes; node++) {
+			magnitude = abs((int)samples[node]);
+			if (magnitude > frame_peak)
+				frame_peak = magnitude;
+		}
+		if (frame_peak > *peak)
+			*peak = frame_peak;
+		if (frame_peak >= BT541_V8_DELTA_THRESHOLD)
+			votes++;
+	}
+	ret = bt541_v8_sample_guard(info, round_deadline);
+	if (ret)
+		return ret;
+	*strong = votes >= 2;
+	return 0;
+}
+
+static void bt541_v8_attempt_recovery_locked(struct bt541_ts_info *info,
+		const char *reason)
+{
+	bool recovered;
+
+	info->v8_suspect = false;
+	info->v8_attempts++;
+	info->work_state = ESD_TIMER;
+	recovered = bt541_v8_recover_locked(info, reason);
+	/* Preserve the cooldown even if mini_init resets other watchdog state. */
+	info->v8_suspect = false;
+	info->v8_cooldown_valid = true;
+	info->v8_next_recovery = jiffies +
+		msecs_to_jiffies(BT541_V8_COOLDOWN_MS);
+	if (recovered)
+		info->v8_recoveries++;
+	else
+		info->v8_errors++;
+}
+
+static void bt541_v8_work_fn(struct work_struct *work)
+{
+	struct bt541_ts_info *info = container_of(to_delayed_work(work),
+			struct bt541_ts_info, v8_work);
+	s16 *samples = NULL;
+	unsigned int nodes, next_delay = BT541_V8_INTERVAL_MS;
+	u32 peak = 0;
+	bool strong = false, second_round;
+	int ret, restore_ret;
+
+	/* Stop/factory paths may hold this mutex while cancelling this work. */
+	if (!mutex_trylock(&info->v8_control_lock)) {
+		bt541_v8_reschedule(info, BT541_V8_INTERVAL_MS);
+		return;
+	}
+	if (!bt541_v8_idle(info) || bt541_v8_in_cooldown(info)) {
+		info->v8_suspect = false;
+		goto out;
+	}
+	nodes = info->cap_info.total_node_num;
+	if (!nodes || nodes > MAX_RAW_DATA_SZ ||
+			nodes != (unsigned int)info->cap_info.x_node_num *
+				info->cap_info.y_node_num) {
+		info->v8_errors++;
+		info->v8_suspect = false;
+		goto out;
+	}
+	samples = kcalloc(nodes, sizeof(*samples), GFP_KERNEL);
+	if (!samples) {
+		info->v8_errors++;
+		info->v8_suspect = false;
+		goto out;
+	}
+
+	WRITE_ONCE(info->v8_busy, true);
+	disable_irq(info->irq);
+#if ESD_TIMER_INTERVAL
+	esd_timer_stop(info);
+	cancel_work_sync(&info->tmr_work);
+	esd_timer_stop(info);
+#endif
+	if (down_trylock(&info->work_lock)) {
+		info->v8_suspect = false;
+		goto out_irq;
+	}
+	/* A point/transition may have completed before disable_irq returned. */
+	if (!bt541_v8_idle(info) || bt541_v8_in_cooldown(info)) {
+		info->v8_suspect = false;
+		goto out_unlock;
+	}
+	second_round = info->v8_suspect;
+	if (!second_round)
+		info->v8_probe_seq = info->v8_point_seq;
+	info->work_state = RAW_DATA;
+	info->v8_peak = 0;
+
+	ret = bt541_v8_sample_locked(info, samples, nodes, &strong, &peak);
+	/* Always attempt POINT restoration, including failed DELTA entry. */
+	restore_ret = bt541_v8_set_mode_locked(info, TOUCH_POINT_MODE, 0);
+	if (ret || restore_ret) {
+		info->v8_errors++;
+		info->v8_suspect = false;
+		/* One message per failed round; normal retry interval is 30 seconds. */
+		input_err(true, &info->client->dev,
+				"V8 DELTA check failed: sample=%d restore=%d errors=%u\n",
+				ret, restore_ret, info->v8_errors);
+		if (restore_ret && READ_ONCE(info->enabled) &&
+				!READ_ONCE(info->v8_stopping))
+			bt541_v8_attempt_recovery_locked(info,
+					"V8 POINT restoration failed");
+		goto out_finish;
+	}
+	info->v8_checks++;
+	info->v8_peak = peak;
+	if (!strong || !bt541_v8_can_run(info) ||
+			info->v8_point_seq != info->v8_probe_seq ||
+			bt541_v8_contacts_active(info)) {
+		info->v8_suspect = false;
+		goto out_finish;
+	}
+	if (second_round) {
+		/* IRQ remains off and work_lock held: no check-to-reset race. */
+		bt541_v8_attempt_recovery_locked(info,
+				"V8 repeated DELTA without reported contacts");
+	} else {
+		info->v8_suspect = true;
+		next_delay = BT541_V8_CONFIRM_MS;
+	}
+
+out_finish:
+	info->work_state = NOTHING;
+out_unlock:
+	up(&info->work_lock);
+out_irq:
+	WRITE_ONCE(info->v8_busy, false);
+	enable_irq(info->irq);
+#if ESD_TIMER_INTERVAL
+	/* Keep traditional ESD alive, including after a failed repair attempt. */
+	if (READ_ONCE(info->enabled) && !READ_ONCE(info->v8_stopping))
+		esd_timer_start(CHECK_ESD_TIMER, info);
+#endif
+out:
+	kfree(samples);
+	/* Reschedule under control_lock; stop must gate new work before cancel. */
+	bt541_v8_reschedule(info, next_delay);
+	mutex_unlock(&info->v8_control_lock);
+}
+
+
+#ifdef CONFIG_FB
+static int bt541_v8_fb_event(struct notifier_block *nb,
+		unsigned long event, void *data)
+{
+	struct bt541_ts_info *info = container_of(nb, struct bt541_ts_info, v8_fb);
+	struct fb_event *ev = data;
+	bool on;
+	int blank;
+	if (!ev || !ev->info || ev->info->node != 0 || !ev->data)
+		return NOTIFY_DONE;
+	if (event != FB_EARLY_EVENT_BLANK && event != FB_EVENT_BLANK &&
+			event != FB_R_EARLY_EVENT_BLANK)
+		return NOTIFY_DONE;
+	blank = *(int *)ev->data;
+	if (event == FB_EARLY_EVENT_BLANK && blank == FB_BLANK_UNBLANK)
+		return NOTIFY_DONE;
+	on = blank == FB_BLANK_UNBLANK;
+	if (event == FB_R_EARLY_EVENT_BLANK)
+		on = !on;
+	atomic_set(&info->v8_screen_on, on);
+	if (!on)
+		cancel_delayed_work_sync(&info->v8_work);
+	mutex_lock(&info->v8_control_lock);
+	info->v8_suspect = false;
+	if (on && info->v8_ready && !info->v8_stopping && info->enabled &&
+			info->v8_auto_enabled)
+		mod_delayed_work(system_wq, &info->v8_work,
+			msecs_to_jiffies(BT541_V8_INTERVAL_MS));
+	mutex_unlock(&info->v8_control_lock);
+	return NOTIFY_OK;
+}
+#endif
 
 #define	PALM_REPORT_WIDTH	200
 #define	PALM_REJECT_WIDTH	255
@@ -3057,26 +3924,32 @@ static irqreturn_t bt541_touch_work(int irq, void *data)
 	u32 tmp;
 	u8 palm = 0;
 	u16 val = 0;
+	unsigned long health_flags;
 #ifdef CONFIG_SEC_FACTORY
 	int ret = 0;
 #endif
 
+	atomic_inc(&info->health.irq);
+	if (!READ_ONCE(info->v8_ready) || !READ_ONCE(info->enabled) || READ_ONCE(info->v8_stopping) ||
+			READ_ONCE(info->v8_busy))
+		return IRQ_HANDLED;
 	if (gpio_get_value(info->pdata->gpio_int)) {
+		atomic_inc(&info->health.invalid_gpio);
 		input_err(true, &client->dev, "Invalid interrupt\n");
 
 		return IRQ_HANDLED;
 	}
 
 	if (down_trylock(&info->work_lock)) {
+		atomic_inc(&info->health.lock_busy);
 		input_err(true, &client->dev, "%s: Failed to occupy work lock\n", __func__);
-		write_cmd(client, BT541_CLEAR_INT_STATUS_CMD);
-
 		return IRQ_HANDLED;
 	}
 #if ESD_TIMER_INTERVAL
 	esd_timer_stop(info);
 #endif
 	if (info->work_state != NOTHING) {
+		atomic_inc(&info->health.state_busy);
 		input_err(true, &client->dev, "%s: Other process occupied\n", __func__);
 		usleep_range(DELAY_FOR_SIGNAL_DELAY, DELAY_FOR_SIGNAL_DELAY);
 
@@ -3104,11 +3977,25 @@ static irqreturn_t bt541_touch_work(int irq, void *data)
 	}
 	if (i == 50) {
 		input_err(true, &client->dev, "Failed to read info coord\n");
+		atomic_inc(&info->health.coord_recovery);
+		/* LineageOS: verify coordinate-error hard recovery. */
 		bt541_power_control(info, POWER_OFF);
-		bt541_power_control(info, POWER_ON_SEQUENCE);
-
 		clear_report_data(info);
-		mini_init_touch(info);
+
+		if (bt541_power_control(info, POWER_ON_SEQUENCE) == false) {
+			input_err(true, &client->dev,
+					"Coordinate recovery failed during power sequence\n");
+			goto out;
+		}
+
+		if (mini_init_touch(info) == false) {
+			input_err(true, &client->dev,
+					"Coordinate recovery failed during mini init\n");
+			goto out;
+		}
+
+		input_info(true, &client->dev,
+				"Recovered touchscreen after coordinate read error\n");
 
 		goto out;
 	}
@@ -3116,15 +4003,43 @@ static irqreturn_t bt541_touch_work(int irq, void *data)
 	if (ts_read_coord(info) == false || info->touch_info.status == 0xffff
 			|| info->touch_info.status == 0x1) { /* maybe desirable reset */
 		input_err(true, &client->dev, "Failed to read info coord\n");
+		atomic_inc(&info->health.coord_recovery);
+		/* LineageOS: verify coordinate-error hard recovery. */
 		bt541_power_control(info, POWER_OFF);
-		bt541_power_control(info, POWER_ON_SEQUENCE);
-
 		clear_report_data(info);
-		mini_init_touch(info);
+
+		if (bt541_power_control(info, POWER_ON_SEQUENCE) == false) {
+			input_err(true, &client->dev,
+					"Coordinate recovery failed during power sequence\n");
+			goto out;
+		}
+
+		if (mini_init_touch(info) == false) {
+			input_err(true, &client->dev,
+					"Coordinate recovery failed during mini init\n");
+			goto out;
+		}
+
+		input_info(true, &client->dev,
+				"Recovered touchscreen after coordinate read error\n");
 
 		goto out;
 	}
 #endif
+	/* Preserve the accepted packet before slot transforms and release clears. */
+	spin_lock_irqsave(&info->health.lock, health_flags);
+	info->health.packet = info->touch_info;
+	info->health.packet_mode = info->touch_mode;
+	info->health.last_packet_jiffies = get_jiffies_64();
+	info->health.packet_valid = true;
+	spin_unlock_irqrestore(&info->health.lock, health_flags);
+	if (info->touch_info.status == 0x0)
+		atomic_inc(&info->health.heartbeat);
+	else
+		atomic_inc(&info->health.nonzero_packet);
+
+
+
 	/* invalid : maybe periodical repeated int. */
 
 	if (info->touch_info.status == 0x0)
@@ -3211,6 +4126,7 @@ static irqreturn_t bt541_touch_work(int irq, void *data)
 			}
 
 			if (x > maxX || y > maxY) {
+				atomic_inc(&info->health.invalid_coord);
 #if !defined(CONFIG_SAMSUNG_PRODUCT_SHIP)
 				input_err(true, &client->dev,
 						"Invalid coord %d : x=%d, y=%d\n", i, x, y);
@@ -3269,6 +4185,11 @@ static irqreturn_t bt541_touch_work(int irq, void *data)
 
 			input_report_abs(info->input_dev, ABS_MT_POSITION_X, x);
 			input_report_abs(info->input_dev, ABS_MT_POSITION_Y, y);
+			atomic_inc(&info->health.contacts);
+			spin_lock_irqsave(&info->health.lock, health_flags);
+			info->health.last_contact_jiffies = get_jiffies_64();
+			info->health.contact_valid = true;
+			spin_unlock_irqrestore(&info->health.lock, health_flags);
 			if (info->sec_point_info[i].finger_state > 0)
 				info->sec_point_info[i].move_count++;
 
@@ -3321,6 +4242,7 @@ static irqreturn_t bt541_touch_work(int irq, void *data)
 			sizeof(struct point_info));
 
 	input_sync(info->input_dev);
+	atomic_inc(&info->health.sync);
 
 out:
 	if (info->work_state == NORMAL) {
@@ -3356,7 +4278,7 @@ static void bt541_ts_late_resume(struct early_suspend *h)
 	}
 #if 0
 	write_cmd(info->client, BT541_WAKEUP_CMD);
-	usleep_range(HZ, HZ);
+	usleep_range(BT541_USEC_PER_MSEC, BT541_USEC_PER_MSEC);
 #else
 	bt541_power_control(info, POWER_ON_SEQUENCE);
 #endif
@@ -3446,30 +4368,44 @@ static int bt541_ts_resume(struct device *dev)
 {
 	struct i2c_client *client = to_i2c_client(dev);
 	struct bt541_ts_info *info = i2c_get_clientdata(client);
+	struct input_dev *input = info->input_dev;
+	int ret = 0;
 
-	bt541_ts_open(info->input_dev);
+	/* Serialize with input enabled/open/close.  A system resume must not
+	 * override a touchscreen disabled by the display/proximity policy.
+	 */
+	mutex_lock(&input->mutex);
+	if (!input->disabled && input->users)
+		ret = bt541_ts_open(input);
+	mutex_unlock(&input->mutex);
 
-	return 0;
-
+	return ret;
 }
 
 static int bt541_ts_suspend(struct device *dev)
 {
 	struct i2c_client *client = to_i2c_client(dev);
 	struct bt541_ts_info *info = i2c_get_clientdata(client);
+	struct input_dev *input = info->input_dev;
 
-	bt541_ts_close(info->input_dev);
+	mutex_lock(&input->mutex);
+	bt541_ts_close(input);
+	mutex_unlock(&input->mutex);
 
 	return 0;
 }
 #endif
 
-static int bt541_ts_open(struct input_dev *dev)
+static int bt541_ts_open_locked(struct input_dev *dev)
 {
 	struct bt541_ts_info *info = input_get_drvdata(dev);
 	struct i2c_client *client = info->client;
 	struct capa_info *cap = &(info->cap_info);
 
+	if (!READ_ONCE(info->v8_ready))
+		return 0;
+	if (info->v8_stopping)
+		return -ENODEV;
 	if(info->enabled == true) {
 		input_err(true, &client->dev, "%s already open\n", __func__);
 		return 0;
@@ -3478,13 +4414,14 @@ static int bt541_ts_open(struct input_dev *dev)
 #if defined(TSP_VERBOSE_DEBUG)
 	input_info(true, &client->dev, "resume++\n");
 #endif
+	WRITE_ONCE(info->v8_busy, true);
 	down(&info->work_lock);
 	if (info->work_state != SUSPEND) {
 		input_err(true, &client->dev, "%s: Invalid work proceedure (%d)\n",
 				__func__, info->work_state);
 		up(&info->work_lock);
-
-		return 0;
+		WRITE_ONCE(info->v8_busy, false);
+		return -EBUSY;
 	}
 	bt541_power_control(info, POWER_ON_SEQUENCE);
 	bt541_pinctrl_configure(info, 1);
@@ -3537,31 +4474,68 @@ static int bt541_ts_open(struct input_dev *dev)
 #if defined(TSP_VERBOSE_DEBUG)
 	input_info(true, &client->dev, "resume--\n");
 #endif
+	info->v8_suspect = false;
+	info->v8_last_point = jiffies;
+	info->v8_point_seq++;
 	info->enabled = true;
 	up(&info->work_lock);
+	WRITE_ONCE(info->v8_busy, false);
 	enable_irq(info->irq);
+	esd_timer_start(CHECK_ESD_TIMER, info);
+	if (info->v8_auto_enabled && atomic_read(&info->v8_screen_on))
+		mod_delayed_work(system_wq, &info->v8_work,
+			msecs_to_jiffies(BT541_V8_INTERVAL_MS));
 	return 0;
 }
 
+static int bt541_ts_open(struct input_dev *dev)
+{
+	struct bt541_ts_info *info = input_get_drvdata(dev);
+	int ret;
+	mutex_lock(&info->v8_control_lock);
+	ret = bt541_ts_open_locked(dev);
+	mutex_unlock(&info->v8_control_lock);
+	return ret;
+}
 
-static void bt541_ts_close(struct input_dev *dev)
+
+static void bt541_ts_close_locked(struct input_dev *dev)
 {
 	struct bt541_ts_info *info = input_get_drvdata(dev);
 	struct i2c_client *client = info->client;
 
+	if (!READ_ONCE(info->v8_ready))
+		return;
+	if (info->v8_stopping)
+		return;
 	if(info->enabled == false) {
 		input_err(true, &client->dev, "%s already suspended\n", __func__);
 		return;
 	}
 	 
 	input_info(true, &client->dev, "%s\n", __func__);
+	WRITE_ONCE(info->enabled, false);
+	WRITE_ONCE(info->v8_busy, true);
+	info->v8_suspect = false;
+	cancel_delayed_work_sync(&info->v8_work);
+
+
        
 
 #ifndef CONFIG_HAS_EARLYSUSPEND
 	disable_irq(info->irq);
 #endif
+
+	/*
+	 * LineageOS: quiesce ESD before draining its workqueue.
+	 * Mark inactive first, stop the one-shot timer, synchronously drain ESD
+	 * work, then stop once more in case a running recovery rearmed it.
+	 */
+	info->enabled = false;
 #if ESD_TIMER_INTERVAL
-	flush_work(&info->tmr_work);
+	esd_timer_stop(info);
+	cancel_work_sync(&info->tmr_work);
+	esd_timer_stop(info);
 #endif
 
 	down(&info->work_lock);
@@ -3569,6 +4543,13 @@ static void bt541_ts_close(struct input_dev *dev)
 			&& info->work_state != SUSPEND) {
 		input_err(true, &client->dev,"%s: Invalid work proceedure (%d)\n",
 				__func__, info->work_state);
+
+		/* LineageOS: restore ESD watchdog if suspend is aborted. */
+		info->enabled = true;
+		WRITE_ONCE(info->v8_busy, false);
+#if ESD_TIMER_INTERVAL
+		esd_timer_start(CHECK_ESD_TIMER, info);
+#endif
 		up(&info->work_lock);
 #ifndef CONFIG_HAS_EARLYSUSPEND
 		enable_irq(info->irq);
@@ -3590,250 +4571,35 @@ static void bt541_ts_close(struct input_dev *dev)
 	bt541_power_control(info, POWER_OFF);
 	bt541_pinctrl_configure(info, 0);
 	info->work_state = SUSPEND;
+	info->touch_mode = TOUCH_POINT_MODE;
+	info->update = 0;
+	info->v8_raw_owner = NULL;
 
 #if defined(TSP_VERBOSE_DEBUG)
 	input_err(true, &info->client->dev, "suspend--\n");
 #endif
 	info->enabled = false;
 	up(&info->work_lock);
+	WRITE_ONCE(info->v8_busy, false);
 
 	return;
 }
 
-
-
-static bool ts_set_touchmode(u16 value)
+static void bt541_ts_close(struct input_dev *dev)
 {
-	int i;
-
-	down(&misc_info->work_lock);
-	if (misc_info->work_state != NOTHING) {
-		input_info(true, &misc_info->client->dev, "other process occupied.. (%d)\n",
-				misc_info->work_state);		
-		up(&misc_info->work_lock);
-		return -1;
-	}
-
-	misc_info->work_state = SET_MODE;
-
-	if (value == TOUCH_DND_MODE) {
-		if (write_reg(misc_info->client, BT541_DND_N_COUNT,
-					SEC_DND_N_COUNT) != I2C_SUCCESS)
-			input_err(true, &misc_info->client->dev, "Failed to set DND_N_COUNT\n");
-
-		if (write_reg(misc_info->client, BT541_DND_U_COUNT,
-					SEC_DND_U_COUNT) != I2C_SUCCESS)
-			input_err(true, &misc_info->client->dev,  "Failed to set DND_U_COUNT\n");
-
-		if (write_reg(misc_info->client, BT541_AFE_FREQUENCY,
-					SEC_DND_FREQUENCY) != I2C_SUCCESS)
-			input_err(true, &misc_info->client->dev,  "Failed to set AFE_FREQUENCY\n");
-
-		if (write_reg(misc_info->client, BT541_ISRC_CTRL,
-					SEC_ISRC_CTRL) != I2C_SUCCESS)
-			input_err(true, &misc_info->client->dev,  "Failed to set ISRC_CTRL\n");
-
-	} else if (misc_info->touch_mode == TOUCH_DND_MODE) {
-		if (write_reg(misc_info->client, BT541_AFE_FREQUENCY,
-					misc_info->cap_info.afe_frequency) != I2C_SUCCESS)
-			input_err(true, &misc_info->client->dev, "Failed to set AFE_FREQUENCY\n");
-
-		if (write_reg(misc_info->client, BT541_DND_U_COUNT,
-					misc_info->cap_info.U_cnt) != I2C_SUCCESS)
-			input_err(true, &misc_info->client->dev, "Failed to set U_COUNT\n");
-
-		if (write_reg(misc_info->client, BT541_SHIFT_VALUE,
-					misc_info->cap_info.shift_value) != I2C_SUCCESS)
-			input_err(true, &misc_info->client->dev, "Failed to set Shift\n");
-
-		if (write_reg(misc_info->client, BT541_ISRC_CTRL,
-					misc_info->cap_info.isrc_ctrl) != I2C_SUCCESS)
-			input_err(true, &misc_info->client->dev, "Failed to set ISRC_CTRL\n");		
-	}
-
-	if (value == TOUCH_SEC_MODE)
-		misc_info->touch_mode = TOUCH_POINT_MODE;
-	else
-		misc_info->touch_mode = value;
-
-	input_info(true, &misc_info->client->dev, "[zinitix_touch] tsp_set_testmode, "
-			"touchkey_testmode = %d\r\n", misc_info->touch_mode);
-
-	if (misc_info->touch_mode != TOUCH_POINT_MODE) {
-		if (write_reg(misc_info->client, BT541_DELAY_RAW_FOR_HOST,
-					RAWDATA_DELAY_FOR_HOST) != I2C_SUCCESS)
-			input_err(true, &misc_info->client->dev, "Fail,to set BT541_DELAY_RAW_FOR_HOST.\r\n");
-	}
-
-	if (write_reg(misc_info->client, BT541_TOUCH_MODE,
-				misc_info->touch_mode) != I2C_SUCCESS)
-		input_err(true, &misc_info->client->dev, "[zinitix_touch] TEST Mode : "
-				"Fail to set ZINITX_TOUCH_MODE %d.\r\n", misc_info->touch_mode);
-
-	/* clear garbage data */
-	for (i = 0; i < 10; i++) {
-		usleep_range(20*HZ, 20*HZ);
-		write_cmd(misc_info->client, BT541_CLEAR_INT_STATUS_CMD);
-	}
-
-	misc_info->work_state = NOTHING;
-	up(&misc_info->work_lock);
-	return 1;
+	struct bt541_ts_info *info = input_get_drvdata(dev);
+	mutex_lock(&info->v8_control_lock);
+	bt541_ts_close_locked(dev);
+	mutex_unlock(&info->v8_control_lock);
 }
 
-static bool ts_set_touchmode2(u16 value)
-{
-	int i;
 
-	down(&misc_info->work_lock);
-	if (misc_info->work_state != NOTHING) {
-		input_err(true, &misc_info->client->dev, "other process occupied.. (%d)\n",
-				misc_info->work_state);
-		up(&misc_info->work_lock);
-		return -1;
-	}
 
-	misc_info->work_state = SET_MODE;
 
-	if (value == TOUCH_DND_MODE) {
-		if (write_reg(misc_info->client, BT541_DND_N_COUNT,
-					SEC_HFDND_N_COUNT) != I2C_SUCCESS)
-			input_err(true, &misc_info->client->dev, "Failed to set DND_N_COUNT\n");
 
-		if (write_reg(misc_info->client, BT541_DND_U_COUNT,
-					SEC_HFDND_U_COUNT) != I2C_SUCCESS)
-			input_err(true, &misc_info->client->dev,  "Failed to set DND_U_COUNT\n");
 
-		if (write_reg(misc_info->client, BT541_AFE_FREQUENCY,
-					SEC_HFDND_FREQUENCY) != I2C_SUCCESS)
-			input_err(true, &misc_info->client->dev,  "Failed to set AFE_FREQUENCY\n");
 
-		if (write_reg(misc_info->client, BT541_ISRC_CTRL,
-					SEC_ISRC_CTRL) != I2C_SUCCESS)
-			input_err(true, &misc_info->client->dev,  "Failed to set ISRC_CTRL\n");
 
-	} else {
-		if (write_reg(misc_info->client, BT541_AFE_FREQUENCY,
-					misc_info->cap_info.afe_frequency) != I2C_SUCCESS)
-			input_err(true, &misc_info->client->dev, "Failed to set AFE_FREQUENCY\n");
-
-		if (write_reg(misc_info->client, BT541_DND_U_COUNT,
-					misc_info->cap_info.U_cnt) != I2C_SUCCESS)
-			input_err(true, &misc_info->client->dev, "Failed to set U_COUNT\n");
-
-		if (write_reg(misc_info->client, BT541_SHIFT_VALUE,
-					misc_info->cap_info.shift_value) != I2C_SUCCESS)
-			input_err(true, &misc_info->client->dev, "Failed to set Shift\n");
-
-		if (write_reg(misc_info->client, BT541_ISRC_CTRL,
-					misc_info->cap_info.isrc_ctrl) != I2C_SUCCESS)
-			input_err(true, &misc_info->client->dev, "Failed to set ISRC_CTRL\n");		
-	}
-
-	if (value == TOUCH_SEC_MODE)
-		misc_info->touch_mode = TOUCH_POINT_MODE;
-	else
-		misc_info->touch_mode = value;
-
-	input_err(true, &misc_info->client->dev, "[zinitix_touch] tsp_set_testmode, "
-			"touchkey_testmode = %d\r\n", misc_info->touch_mode);
-
-	if (misc_info->touch_mode != TOUCH_POINT_MODE) {
-		if (write_reg(misc_info->client, BT541_DELAY_RAW_FOR_HOST,
-					RAWDATA_DELAY_FOR_HOST) != I2C_SUCCESS)
-			input_err(true, &misc_info->client->dev, "Fail to set BT541_DELAY_RAW_FOR_HOST.\r\n");
-	}
-
-	if (write_reg(misc_info->client, BT541_TOUCH_MODE,
-				misc_info->touch_mode) != I2C_SUCCESS)
-		input_err(true, &misc_info->client->dev, "[zinitix_touch] TEST Mode : "
-				"Fail to set ZINITX_TOUCH_MODE %d.\r\n", misc_info->touch_mode);
-
-	/* clear garbage data */
-	for (i = 0; i < 10; i++) {
-		usleep_range(20*HZ, 20*HZ);
-		write_cmd(misc_info->client, BT541_CLEAR_INT_STATUS_CMD);
-	}
-
-	misc_info->work_state = NOTHING;
-	up(&misc_info->work_lock);
-	return 1;
-}
-
-static bool ts_set_touchmode16(u16 value)
-{
-	int i;
-
-	down(&misc_info->work_lock);
-	if (misc_info->work_state != NOTHING) {
-		input_err(true, &misc_info->client->dev, "other process occupied.. (%d)\n",
-				misc_info->work_state);
-		up(&misc_info->work_lock);
-		return -1;
-	}
-
-	misc_info->work_state = SET_MODE;
-
-	if (value == TOUCH_H_GAP_JITTER_MODE) {
-		if (write_reg(misc_info->client, BT541_DND_N_COUNT,
-					SEC_HFDND_N_COUNT) != I2C_SUCCESS)
-			input_err(true, &misc_info->client->dev, "Failed to set DND_N_COUNT\n");
-
-		if (write_reg(misc_info->client, BT541_DND_U_COUNT,
-					SEC_HFDND_U_COUNT) != I2C_SUCCESS)
-			input_err(true, &misc_info->client->dev,  "Failed to set DND_U_COUNT\n");
-
-		if (write_reg(misc_info->client, BT541_AFE_FREQUENCY,
-					SEC_HFDND_FREQUENCY) != I2C_SUCCESS)
-			input_err(true, &misc_info->client->dev,  "Failed to set AFE_FREQUENCY\n");
-
-		if (write_reg(misc_info->client, BT541_ISRC_CTRL,
-					SEC_ISRC_CTRL) != I2C_SUCCESS)
-			input_err(true, &misc_info->client->dev,  "Failed to set ISRC_CTRL\n");
-
-	} else {
-		if (write_reg(misc_info->client, BT541_AFE_FREQUENCY,
-					misc_info->cap_info.afe_frequency) != I2C_SUCCESS)
-			input_err(true, &misc_info->client->dev, "Failed to set AFE_FREQUENCY\n");
-
-		if (write_reg(misc_info->client, BT541_DND_U_COUNT,
-					misc_info->cap_info.U_cnt) != I2C_SUCCESS)
-			input_err(true, &misc_info->client->dev, "Failed to set U_COUNT\n");
-
-		if (write_reg(misc_info->client, BT541_ISRC_CTRL,
-					misc_info->cap_info.isrc_ctrl) != I2C_SUCCESS)
-			input_err(true, &misc_info->client->dev, "Failed to set ISRC_CTRL\n");
-	}
-
-	if (value == TOUCH_SEC_MODE)
-		misc_info->touch_mode = TOUCH_POINT_MODE;
-	else
-		misc_info->touch_mode = value;
-
-	input_err(true, &misc_info->client->dev, "[zinitix_touch] tsp_set_testmode, "
-			"touchkey_testmode = %d\r\n", misc_info->touch_mode);
-
-	if (misc_info->touch_mode != TOUCH_POINT_MODE) {
-		if (write_reg(misc_info->client, BT541_DELAY_RAW_FOR_HOST,
-					RAWDATA_DELAY_FOR_HOST) != I2C_SUCCESS)
-			input_err(true, &misc_info->client->dev, "Fail to set BT541_DELAY_RAW_FOR_HOST.\r\n");
-	}
-
-	if (write_reg(misc_info->client, BT541_TOUCH_MODE,
-				misc_info->touch_mode) != I2C_SUCCESS)
-		input_err(true, &misc_info->client->dev, "[zinitix_touch] TEST Mode : "
-				"Fail to set ZINITX_TOUCH_MODE %d.\r\n", misc_info->touch_mode);
-
-	/* clear garbage data */
-	for (i = 0; i < 10; i++) {
-		usleep_range(20*HZ, 20*HZ);
-		write_cmd(misc_info->client, BT541_CLEAR_INT_STATUS_CMD);
-	}
-
-	misc_info->work_state = NOTHING;
-	up(&misc_info->work_lock);
-	return 1;
-}
 
 
 static int ts_upgrade_sequence(const u8 *firmware_data, u32 firmware_size)
@@ -4094,6 +4860,173 @@ static void get_threshold(void *device_data)
 			(int)strnlen(buf, sizeof(buf)));
 
 	return;
+}
+
+
+
+/*
+ * Use the kernel conversion functions, not this driver's local BT541_USEC_PER_MSEC macro.
+ * The 64-bit timestamp avoids the 32-bit jiffies wrap.  Ages saturate at
+ * 2147483647 ms; -1 means no packet/contact has been observed since probe.
+ */
+static s32 bt541_health_age_ms(u64 now, u64 last, bool valid)
+{
+	u64 elapsed;
+
+	if (!valid)
+		return -1;
+	elapsed = now - last;
+	if (elapsed >= msecs_to_jiffies(2147483647U))
+		return 2147483647;
+	return jiffies_to_msecs((unsigned long)elapsed);
+}
+
+/*
+ * Read-only factory pages: no I2C, IRQ masking, mode changes or recovery.
+ * Page 0 consists of independent atomic counters (not one atomic snapshot).
+ * Page 1 copies the last accepted packet before the IRQ modifies its slots.
+ * A separate cache lock never contends with the IRQ's work_lock.  The live
+ * enabled/state/mode/contact-count fields are approximate individual reads,
+ * not one simultaneous snapshot with the cached packet.
+ */
+static void get_touch_health(void *device_data)
+{
+	struct sec_cmd_data *sec = (struct sec_cmd_data *)device_data;
+	struct bt541_ts_info *info =
+		container_of(sec, struct bt541_ts_info, sec);
+	struct point_info packet;
+	char buff[384];
+	u64 now, last_packet, last_contact;
+	unsigned long flags;
+	u16 touch_mode, packet_mode;
+	u8 work_state;
+	int touch_count;
+	s32 packet_age, contact_age;
+	bool enabled, packet_valid, contact_valid;
+	int len;
+
+	sec_cmd_set_default_result(sec);
+	if (sec->cmd_param[0] == 0) {
+		/* contacts counts accepted active-slot reports, including moves. */
+		len = scnprintf(buff, sizeof(buff),
+			"v:1 irq:%u gpio:%u lock:%u busy:%u err:%u "
+			"hb:%u pkt:%u contacts:%u sync:%u badxy:%u",
+			(unsigned int)atomic_read(&info->health.irq),
+			(unsigned int)atomic_read(&info->health.invalid_gpio),
+			(unsigned int)atomic_read(&info->health.lock_busy),
+			(unsigned int)atomic_read(&info->health.state_busy),
+			(unsigned int)atomic_read(&info->health.coord_recovery),
+			(unsigned int)atomic_read(&info->health.heartbeat),
+			(unsigned int)atomic_read(&info->health.nonzero_packet),
+			(unsigned int)atomic_read(&info->health.contacts),
+			(unsigned int)atomic_read(&info->health.sync),
+			(unsigned int)atomic_read(&info->health.invalid_coord));
+	} else if (sec->cmd_param[0] == 1) {
+		spin_lock_irqsave(&info->health.lock, flags);
+		packet = info->health.packet;
+		packet_valid = info->health.packet_valid;
+		packet_mode = info->health.packet_mode;
+		last_packet = info->health.last_packet_jiffies;
+		last_contact = info->health.last_contact_jiffies;
+		contact_valid = info->health.contact_valid;
+		spin_unlock_irqrestore(&info->health.lock, flags);
+
+		enabled = ACCESS_ONCE(info->enabled);
+		work_state = ACCESS_ONCE(info->work_state);
+		touch_mode = ACCESS_ONCE(info->touch_mode);
+		touch_count = ACCESS_ONCE(info->touch_count);
+		now = get_jiffies_64();
+		packet_age = bt541_health_age_ms(now, last_packet, packet_valid);
+		contact_age = bt541_health_age_ms(now, last_contact, contact_valid);
+
+		len = scnprintf(buff, sizeof(buff),
+			"v:1 en:%u ws:%u mode:%u tc:%d pv:%u pm:%u st:%04x "
+#if (TOUCH_POINT_MODE == 1)
+			"fc:-1 ts:-1 ef:%04x "
+#else
+			"fc:%u ts:%u "
+#endif
+			"s0:%02x s1:%02x pa:%d ca:%d",
+			enabled ? 1 : 0, work_state, touch_mode, touch_count,
+			packet_valid ? 1 : 0, packet_mode, packet.status,
+#if (TOUCH_POINT_MODE == 1)
+			packet.event_flag,
+#else
+			packet.finger_cnt, packet.time_stamp,
+#endif
+			packet.coord[0].sub_status, packet.coord[1].sub_status,
+			packet_age, contact_age);
+	} else {
+		len = scnprintf(buff, sizeof(buff), "NG_PARAM");
+		goto fail;
+	}
+	sec_cmd_set_cmd_result(sec, buff, len);
+	sec->cmd_state = SEC_CMD_STATUS_OK;
+	return;
+
+fail:
+	sec_cmd_set_cmd_result(sec, buff, len);
+	sec->cmd_state = SEC_CMD_STATUS_FAIL;
+}
+
+static void get_watchdog_status(void *device_data)
+{
+	struct sec_cmd_data *sec = device_data;
+	struct bt541_ts_info *info = container_of(sec, struct bt541_ts_info, sec);
+	char buff[256];
+
+	sec_cmd_set_default_result(sec);
+	snprintf(buff, sizeof(buff),
+		"v8 en:%u screen:%d suspect:%u checks:%u err:%u peak:%u attempts:%u ok:%u",
+		READ_ONCE(info->v8_auto_enabled), atomic_read(&info->v8_screen_on),
+		READ_ONCE(info->v8_suspect), READ_ONCE(info->v8_checks),
+		READ_ONCE(info->v8_errors), READ_ONCE(info->v8_peak),
+		READ_ONCE(info->v8_attempts), READ_ONCE(info->v8_recoveries));
+	sec_cmd_set_cmd_result(sec, buff, strlen(buff));
+	sec->cmd_state = SEC_CMD_STATUS_OK;
+}
+
+static void set_auto_recover(void *device_data)
+{
+	struct sec_cmd_data *sec = device_data;
+	struct bt541_ts_info *info = container_of(sec, struct bt541_ts_info, sec);
+
+	sec_cmd_set_default_result(sec);
+	if (sec->cmd_param[0] != 0 && sec->cmd_param[0] != 1) {
+		sec_cmd_set_cmd_result(sec, "NG_PARAM", 8);
+		sec->cmd_state = SEC_CMD_STATUS_FAIL;
+		return;
+	}
+	WRITE_ONCE(info->v8_auto_enabled, !!sec->cmd_param[0]);
+	info->v8_suspect = false;
+	/* Worker uses trylock, so draining it under control_lock is safe. */
+	cancel_delayed_work_sync(&info->v8_work);
+	if (info->v8_auto_enabled && info->enabled &&
+			atomic_read(&info->v8_screen_on) && !info->v8_stopping)
+		mod_delayed_work(system_wq, &info->v8_work,
+				msecs_to_jiffies(BT541_V8_INTERVAL_MS));
+	sec_cmd_set_cmd_result(sec, "OK", 2);
+	sec->cmd_state = SEC_CMD_STATUS_OK;
+}
+
+static void force_recover(void *device_data)
+{
+	struct sec_cmd_data *sec = (struct sec_cmd_data *)device_data;
+	struct bt541_ts_info *info =
+		container_of(sec, struct bt541_ts_info, sec);
+	char buff[SEC_CMD_STR_LEN] = { 0 };
+	bool ret;
+
+	sec_cmd_set_default_result(sec);
+
+
+	ret = bt541_force_recovery(info, "factory command");
+
+	snprintf(buff, sizeof(buff), "%s", ret ? "OK" : "NG");
+	sec_cmd_set_cmd_result(sec, buff, strnlen(buff, sizeof(buff)));
+	sec->cmd_state = ret ? SEC_CMD_STATUS_OK : SEC_CMD_STATUS_FAIL;
+
+	input_info(true, &info->client->dev, "%s: %s\n", __func__, buff);
 }
 
 static void module_off_master(void *device_data)
@@ -4388,7 +5321,7 @@ static void run_dnd_read(void *device_data)
 	char buf[SEC_CMD_STR_LEN] = { 0 };
 	struct tsp_raw_data *raw_data = info->raw_data;
 	int x_num = info->cap_info.x_node_num, y_num = info->cap_info.y_node_num;
-	int i, j, offset, val, x, y, node_num;
+	int i, j, offset, val = 0, x = 0, y = 0, node_num = 0;
 	bool result = true;
 
 #if ESD_TIMER_INTERVAL
@@ -4447,7 +5380,7 @@ static void run_dnd_v_gap_read(void *device_data)
 	char buf[SEC_CMD_STR_LEN] = { 0 };
 	struct tsp_raw_data *raw_data = info->raw_data;
 	int x_num = info->cap_info.x_node_num, y_num = info->cap_info.y_node_num;
-	int i, j, offset, val, cur_val, next_val, x, y, node_num, fail_val;
+	int i, j, offset, val, cur_val, next_val, x = 0, y = 0, node_num = 0, fail_val = 0;
 	bool result = true;
 
 	sec_cmd_set_default_result(sec);
@@ -4509,7 +5442,7 @@ static void run_dnd_h_gap_read(void *device_data)
 	char buf[SEC_CMD_STR_LEN] = { 0 };
 	struct tsp_raw_data *raw_data = info->raw_data;
 	int x_num = info->cap_info.x_node_num, y_num = info->cap_info.y_node_num;
-	int i, j, offset, val, cur_val, next_val, x, y, node_num, fail_val;
+	int i, j, offset, val, cur_val, next_val, x = 0, y = 0, node_num = 0, fail_val = 0;
 	bool result = true;
 
 	sec_cmd_set_default_result(sec);
@@ -4702,7 +5635,7 @@ static void run_hfdnd_v_gap_read(void *device_data)
 	char buf[SEC_CMD_STR_LEN] = { 0 };
 	struct tsp_raw_data *raw_data = info->raw_data;
 	int x_num = info->cap_info.x_node_num, y_num = info->cap_info.y_node_num;
-	int i, j, offset, val, cur_val, next_val, x, y, node_num, fail_val;
+	int i, j, offset, val, cur_val, next_val, x = 0, y = 0, node_num = 0, fail_val = 0;
 	bool result = true;
 
 	sec_cmd_set_default_result(sec);
@@ -4764,7 +5697,7 @@ static void run_hfdnd_h_gap_read(void *device_data)
 	char buf[SEC_CMD_STR_LEN] = { 0 };
 	struct tsp_raw_data *raw_data = info->raw_data;
 	int x_num = info->cap_info.x_node_num, y_num = info->cap_info.y_node_num;
-	int i, j, offset, val, cur_val, next_val, x, y, node_num, fail_val;
+	int i, j, offset, val, cur_val, next_val, x = 0, y = 0, node_num = 0, fail_val = 0;
 	bool result = true;
 
 	sec_cmd_set_default_result(sec);
@@ -4906,7 +5839,7 @@ static void run_gapjitter_read(void *device_data)
 	char buf[SEC_CMD_STR_LEN] = { 0 };
 	struct tsp_raw_data *raw_data = info->raw_data;
 	int x_num = info->cap_info.x_node_num, y_num = info->cap_info.y_node_num;
-	int i, j, offset, val, cur_val, x, y, node_num, fail_val;
+	int i, j, offset, val, cur_val, x = 0, y = 0, node_num = 0, fail_val = 0;
 	bool result = true;
 
 #if ESD_TIMER_INTERVAL
@@ -4999,64 +5932,7 @@ static void get_gapjitter(void * device_data)
 	return;
 }
 
-static bool get_raw_data_size(struct bt541_ts_info *info, u8 *buff, int skip_cnt, int sz)
-{
-	struct i2c_client *client = info->client;
-	struct bt541_ts_platform_data *pdata = info->pdata;
-	int i;
-	u32 temp_sz;
-	int retry = 50;
 
-	down(&info->work_lock);
-	if (info->work_state != NOTHING) {
-		input_err(true, &info->client->dev, "other process occupied.. (%d)\n", info->work_state);
-		up(&info->work_lock);
-		return false;
-	}
-
-	info->work_state = RAW_DATA;
-
-	for (i = 0; i < skip_cnt; i++) {
-		while (gpio_get_value(pdata->gpio_int))
-			msleep(1);
-
-		write_cmd(client, BT541_CLEAR_INT_STATUS_CMD);
-		msleep(1);
-	}
-
-	while (gpio_get_value(pdata->gpio_int) && retry-- > 0 )
-		msleep(1);
-	
-	if (retry < 0) {
-		input_info(true, &info->client->dev, "%s failed\n", __func__ );
-		info->work_state = NOTHING;
-		up(&info->work_lock);
-		return false;
-	}
-	
-
-	for (i = 0; sz > 0; i++) {
-		temp_sz = I2C_BUFFER_SIZE;
-
-		if (sz < I2C_BUFFER_SIZE)
-			temp_sz = sz;
-		if (read_raw_data(client, BT541_RAWDATA_REG + i,
-			(char *)(buff + (i * I2C_BUFFER_SIZE)), temp_sz) < 0) {
-
-			input_err(true, &misc_info->client->dev, "error : read zinitix tc raw data\n");
-			info->work_state = NOTHING;
-			up(&info->work_lock);
-			return false;
-		}
-		sz -= I2C_BUFFER_SIZE;
-	}
-
-	write_cmd(client, BT541_CLEAR_INT_STATUS_CMD);
-	info->work_state = NOTHING;
-	up(&info->work_lock);
-
-	return true;
-}
 
 static void run_reference_read(void *device_data)
 {
@@ -5243,57 +6119,42 @@ static void get_hfdnd(void *device_data)
 
 static void run_delta_read(void *device_data)
 {
-	struct sec_cmd_data *sec = (struct sec_cmd_data *)device_data;
+	struct sec_cmd_data *sec = device_data;
 	struct bt541_ts_info *info = container_of(sec, struct bt541_ts_info, sec);
-	char buf[SEC_CMD_STR_LEN] = { 0 };
-	struct tsp_raw_data *raw_data = info->raw_data;
-	s16 min, max;
-	s32 i,j, offset;
-	int x_num = info->cap_info.x_node_num, y_num = info->cap_info.y_node_num;
+	char buf[SEC_CMD_STR_LEN];
+	s16 *data = info->raw_data->delta_data;
+	int i, min = 32767, max = -32768;
+	bool acquired = false, restored, entered;
 
-#if ESD_TIMER_INTERVAL
-	esd_timer_stop(misc_info);
-#endif
-	disable_irq(info->irq);
 	sec_cmd_set_default_result(sec);
-
-	ts_set_touchmode(TOUCH_DELTA_MODE);
-	get_raw_data(info, (u8 *)raw_data->delta_data, 10);
-	ts_set_touchmode(TOUCH_POINT_MODE);
-
-	min = (s16)0x7FFF;
-	max = (s16)0x8000;
-
-	for (i = 0; i < x_num; i++) {
-		for (j = 0; j < y_num; j++) {
-//			printk("delta_data : %d\n", raw_data->delta_data[j+i]);
-			offset = (i * y_num) + j;
-			printk("%d ", raw_data->delta_data[offset]);
-
-			if (raw_data->delta_data[offset] < min &&
-					raw_data->delta_data[offset] != 0)
-				min = raw_data->delta_data[offset];
-
-			if (raw_data->delta_data[offset] > max)
-				max = raw_data->delta_data[offset];
-
-		}
-		printk("\n");
-	}
-
-	snprintf(buf, sizeof(buf), "%d,%d\n", min, max);
-	sec_cmd_set_cmd_result(sec, buf, strnlen(buf, sizeof(buf)));
-	sec->cmd_state = SEC_CMD_STATUS_OK;
-
-	input_info(true, &info->client->dev, "%s: \"%s\"(%d)\n", __func__, buf,
-			(int)strlen(buf));
-
+	WRITE_ONCE(info->v8_busy, true);
+	disable_irq(info->irq);
+	esd_timer_stop(info);
+	cancel_work_sync(&info->tmr_work);
+	esd_timer_stop(info);
+	entered = ts_set_touchmode(TOUCH_DELTA_MODE);
+	if (entered)
+		acquired = get_raw_data(info, (u8 *)data, 10);
+	restored = ts_set_touchmode(TOUCH_POINT_MODE);
+	WRITE_ONCE(info->v8_busy, false);
 	enable_irq(info->irq);
-#if ESD_TIMER_INTERVAL
-	esd_timer_start(CHECK_ESD_TIMER, misc_info);
-#endif
-
-	return;
+	if (!restored)
+		bt541_force_recovery(info, "factory DELTA restore failed");
+	esd_timer_start(CHECK_ESD_TIMER, info);
+	if (!entered || !acquired || !restored) {
+		sec_cmd_set_cmd_result(sec, "NG_IO", 5);
+		sec->cmd_state = SEC_CMD_STATUS_FAIL;
+		return;
+	}
+	for (i = 0; i < info->cap_info.total_node_num; i++) {
+		if (data[i] < min)
+			min = data[i];
+		if (data[i] > max)
+			max = data[i];
+	}
+	snprintf(buf, sizeof(buf), "%d,%d", min, max);
+	sec_cmd_set_cmd_result(sec, buf, strlen(buf));
+	sec->cmd_state = SEC_CMD_STATUS_OK;
 }
 
 static void get_delta(void *device_data)
@@ -5835,87 +6696,262 @@ static struct attribute_group touchkey_attr_group = {
 };
 #endif
 
+/* Whole-command exclusion: factory, misc, PM and V8 share one mutex. */
+#define BT541_V8_FACTORY_WRAPPER(fn) \
+static void v8_##fn(void *device_data) \
+{ \
+	struct sec_cmd_data *sec = device_data; \
+	struct bt541_ts_info *info = container_of(sec, struct bt541_ts_info, sec); \
+	mutex_lock(&info->v8_control_lock); \
+	info->v8_suspect = false; \
+	if (!info->v8_ready || info->v8_stopping || (!info->enabled && fn != set_auto_recover)) { \
+		sec_cmd_set_default_result(sec); \
+		sec_cmd_set_cmd_result(sec, "NG_INACTIVE", 11); \
+		sec->cmd_state = SEC_CMD_STATUS_FAIL; \
+	} else if (fn == set_auto_recover) { \
+		fn(device_data); \
+	} else { \
+		WRITE_ONCE(info->v8_busy, true); \
+		disable_irq(info->irq); \
+		esd_timer_stop(info); \
+		cancel_work_sync(&info->tmr_work); \
+		esd_timer_stop(info); \
+		fn(device_data); \
+		WRITE_ONCE(info->v8_busy, false); \
+		enable_irq(info->irq); \
+		esd_timer_start(CHECK_ESD_TIMER, info); \
+	} \
+	mutex_unlock(&info->v8_control_lock); \
+}
+BT541_V8_FACTORY_WRAPPER(fw_update)
+BT541_V8_FACTORY_WRAPPER(get_fw_ver_bin)
+BT541_V8_FACTORY_WRAPPER(get_fw_ver_ic)
+BT541_V8_FACTORY_WRAPPER(get_threshold)
+BT541_V8_FACTORY_WRAPPER(module_off_master)
+BT541_V8_FACTORY_WRAPPER(module_on_master)
+BT541_V8_FACTORY_WRAPPER(module_off_slave)
+BT541_V8_FACTORY_WRAPPER(module_on_slave)
+BT541_V8_FACTORY_WRAPPER(get_chip_vendor)
+BT541_V8_FACTORY_WRAPPER(get_chip_name)
+BT541_V8_FACTORY_WRAPPER(get_x_num)
+BT541_V8_FACTORY_WRAPPER(get_y_num)
+BT541_V8_FACTORY_WRAPPER(not_support_cmd)
+BT541_V8_FACTORY_WRAPPER(run_reference_read)
+BT541_V8_FACTORY_WRAPPER(get_reference)
+BT541_V8_FACTORY_WRAPPER(run_delta_read)
+BT541_V8_FACTORY_WRAPPER(get_delta)
+BT541_V8_FACTORY_WRAPPER(run_dnd_read)
+BT541_V8_FACTORY_WRAPPER(get_dnd)
+BT541_V8_FACTORY_WRAPPER(run_dnd_v_gap_read)
+BT541_V8_FACTORY_WRAPPER(get_dnd_v_gap)
+BT541_V8_FACTORY_WRAPPER(run_dnd_h_gap_read)
+BT541_V8_FACTORY_WRAPPER(get_dnd_h_gap)
+BT541_V8_FACTORY_WRAPPER(run_hfdnd_read)
+BT541_V8_FACTORY_WRAPPER(get_hfdnd)
+BT541_V8_FACTORY_WRAPPER(run_hfdnd_v_gap_read)
+BT541_V8_FACTORY_WRAPPER(get_hfdnd_v_gap)
+BT541_V8_FACTORY_WRAPPER(run_hfdnd_h_gap_read)
+BT541_V8_FACTORY_WRAPPER(get_hfdnd_h_gap)
+BT541_V8_FACTORY_WRAPPER(run_gapjitter_read)
+BT541_V8_FACTORY_WRAPPER(get_gapjitter)
+BT541_V8_FACTORY_WRAPPER(hfdnd_spec_adjust)
+BT541_V8_FACTORY_WRAPPER(clear_reference_data)
+BT541_V8_FACTORY_WRAPPER(run_force_calibration)
+BT541_V8_FACTORY_WRAPPER(get_pat_information)
+BT541_V8_FACTORY_WRAPPER(get_calibration_nv_data)
+BT541_V8_FACTORY_WRAPPER(get_tune_fix_ver_data)
+BT541_V8_FACTORY_WRAPPER(set_calibration_nv_data)
+BT541_V8_FACTORY_WRAPPER(set_tune_fix_ver_data)
+BT541_V8_FACTORY_WRAPPER(dead_zone_enable)
+BT541_V8_FACTORY_WRAPPER(run_mis_cal_read)
+BT541_V8_FACTORY_WRAPPER(get_mis_cal)
+BT541_V8_FACTORY_WRAPPER(force_recover)
+BT541_V8_FACTORY_WRAPPER(set_auto_recover)
+#undef BT541_V8_FACTORY_WRAPPER
+
+static void bt541_v8_exit_factory(struct bt541_ts_info *info)
+{
+        struct device *dev;
+
+        if (info->v8_sec_initialized) {
+                dev = info->sec.fac_dev;
+                /* sec_cmd_exit logs fac_dev after device_destroy while
+                 * draining the command FIFO; keep that device alive.
+                 */
+                get_device(dev);
+                sysfs_remove_link(&dev->kobj, "input");
+                /* CONFIG_SEC_SYSFS allocates devt dynamically. The class
+                 * selector SEC_CLASS_DEVT_TSP is not necessarily its devt.
+                 */
+                sec_cmd_exit(&info->sec, dev->devt);
+                info->v8_sec_initialized = false;
+                info->sec.fac_dev = NULL;
+                put_device(dev);
+        }
+
+#ifdef SUPPORTED_TOUCH_KEY
+        dev = info->v8_factory_tk_dev;
+        if (dev) {
+                if (info->v8_factory_tk_group_created) {
+                        sysfs_remove_group(&dev->kobj, &touchkey_attr_group);
+                        info->v8_factory_tk_group_created = false;
+                }
+                dev_set_drvdata(dev, NULL);
+                sec_device_destroy(dev->devt);
+                info->v8_factory_tk_dev = NULL;
+        }
+#endif
+
+        /* The original driver creates this device but never installs
+         * sec_touch_pretest_attr_group on it. There is no group to remove.
+         */
+        dev = info->v8_sec_pretest_dev;
+        if (dev) {
+                dev_set_drvdata(dev, NULL);
+                sec_device_destroy(dev->devt);
+                info->v8_sec_pretest_dev = NULL;
+        }
+}
+
+static bool bt541_v8_begin_terminal_stop(struct bt541_ts_info *info)
+{
+        bool was_enabled;
+
+        mutex_lock(&info->v8_control_lock);
+        was_enabled = info->enabled;
+        WRITE_ONCE(info->v8_stopping, true);
+        WRITE_ONCE(info->enabled, false);
+        WRITE_ONCE(info->v8_busy, true);
+        mutex_unlock(&info->v8_control_lock);
+        return was_enabled;
+}
+
+static void bt541_v8_unregister_notifications(struct bt541_ts_info *info)
+{
+#ifdef CONFIG_FB
+        if (info->v8_fb_registered) {
+                fb_unregister_client(&info->v8_fb);
+                info->v8_fb_registered = false;
+        }
+#endif
+#ifdef CONFIG_HAS_EARLYSUSPEND
+        unregister_early_suspend(&info->early_suspend);
+#endif
+#if defined(CONFIG_PM_RUNTIME) && !defined(CONFIG_HAS_EARLYSUSPEND)
+        pm_runtime_disable(&info->client->dev);
+#endif
+}
+
+static void bt541_v8_quiesce_locked(struct bt541_ts_info *info,
+                bool was_enabled)
+{
+        if (was_enabled)
+                disable_irq(info->irq);
+        else
+                synchronize_irq(info->irq);
+
+        cancel_delayed_work_sync(&info->v8_work);
+#if ESD_TIMER_INTERVAL
+        esd_timer_stop(info);
+        cancel_work_sync(&info->tmr_work);
+        /* A worker already running at the first stop may have rearmed it. */
+        esd_timer_stop(info);
+#endif
+
+        down(&info->work_lock);
+        info->work_state = REMOVE;
+        clear_report_data(info);
+#if ESD_TIMER_INTERVAL
+        if (was_enabled)
+                write_reg(info->client,
+                                BT541_PERIODICAL_INTERRUPT_INTERVAL, 0);
+#endif
+        bt541_power_control(info, POWER_OFF);
+        bt541_pinctrl_configure(info, 0);
+        up(&info->work_lock);
+}
+
 static int init_sec_factory(struct bt541_ts_info *info)
 {
-	struct i2c_client *client = info->client;
-#ifdef SUPPORTED_TOUCH_KEY
-	struct device *factory_tk_dev;
-#endif
-	struct device *sec_pretest_dev;
-	struct tsp_raw_data *raw_data;
-	int retval;
+        struct device *dev;
+        int ret;
 
-	raw_data = kzalloc(sizeof(struct tsp_raw_data), GFP_KERNEL);
-	if (unlikely(!raw_data)) {
-		input_err(true, &info->client->dev, "%s: Failed to allocate memory\n",
-			__func__);
-		retval = -ENOMEM;
-		return retval;
-	}
+        /* Finish all callback-visible initialization before publishing cmd. */
+        info->raw_data = kzalloc(sizeof(struct tsp_raw_data), GFP_KERNEL);
+        if (!info->raw_data)
+                return -ENOMEM;
 
-	retval = sec_cmd_init(&info->sec, bt541_commands,
-			ARRAY_SIZE(bt541_commands), SEC_CLASS_DEVT_TSP);
-	if (retval < 0) {
-		input_err(true, &info->client->dev,
-			"%s: Failed to sec_cmd_init\n", __func__);
-		kfree(raw_data);
-		return retval;
-	}
+        dnd_h_gap = assy_dnd_h_gap;
+        dnd_v_gap = assy_dnd_v_gap;
+        hfdnd_h_gap = assy_hfdnd_h_gap;
+        hfdnd_v_gap = assy_hfdnd_v_gap;
+        hfdnd_h_jitter_gap = assy_hfdnd_h_jitter_gap;
+        dnd_max = assy_dnd_max;
+        dnd_min = assy_dnd_min;
+        hfdnd_max = assy_hfdnd_max;
+        hfdnd_min = assy_hfdnd_min;
+        reference_data_abnormal_max = assy_reference_data_abnormal_max;
 
-	retval = sysfs_create_link(&info->sec.fac_dev->kobj,
-		&info->input_dev->dev.kobj, "input");
-	if (retval < 0) {
-		input_err(true, &client->dev, "%s [ERROR] sysfs_create_link\n", __func__);
-		sec_cmd_exit(&info->sec, SEC_CLASS_DEVT_TSP);
-		kfree(raw_data);
-		return retval;
-	}
+        ret = sec_cmd_init(&info->sec, bt541_commands,
+                        ARRAY_SIZE(bt541_commands), SEC_CLASS_DEVT_TSP);
+        if (ret)
+                goto err_free_raw;
+        info->v8_sec_initialized = true;
+
+        ret = sysfs_create_link(&info->sec.fac_dev->kobj,
+                        &info->input_dev->dev.kobj, "input");
+        if (ret)
+                goto err_interfaces;
 
 #ifdef SUPPORTED_TOUCH_KEY
-	factory_tk_dev = sec_device_create(info, "sec_touchkey");
-	if (IS_ERR(factory_tk_dev)) {
-		input_err(true, &info->client->dev, "Failed to create factory dev\n");
-		retval = -ENODEV;
-		goto err_create_device;
-	}
+        dev = sec_device_create(info, "sec_touchkey");
+        if (IS_ERR(dev)) {
+                ret = PTR_ERR(dev);
+                goto err_interfaces;
+        }
+        info->v8_factory_tk_dev = dev;
 #endif
 
-	/* /sys/class/sec/tsp/input/ */
-	sec_pretest_dev = sec_device_create(info, "input");
-	if (IS_ERR(sec_pretest_dev)) {
-		input_err(true, &info->client->dev, "Failed to create device (%s)!\n", "tsp");
-		goto err_create_device;
-	}
+        dev = sec_device_create(info, "input");
+        if (IS_ERR(dev)) {
+                ret = PTR_ERR(dev);
+                goto err_interfaces;
+        }
+        info->v8_sec_pretest_dev = dev;
 
 #ifdef SUPPORTED_TOUCH_KEY
-	retval = sysfs_create_group(&factory_tk_dev->kobj, &touchkey_attr_group);
-	if (unlikely(retval)) {
-		input_err(true, &info->client->dev, "Failed to create touchkey sysfs group\n");
-		goto err_create_sysfs;
-	}
+        ret = sysfs_create_group(&info->v8_factory_tk_dev->kobj,
+                        &touchkey_attr_group);
+        if (ret)
+                goto err_interfaces;
+        info->v8_factory_tk_group_created = true;
 #endif
+        return 0;
 
-	info->raw_data = raw_data;
-
-	dnd_h_gap = assy_dnd_h_gap;
-	dnd_v_gap = assy_dnd_v_gap;
-	hfdnd_h_gap = assy_hfdnd_h_gap;
-	hfdnd_v_gap = assy_hfdnd_v_gap;
-	hfdnd_h_jitter_gap = assy_hfdnd_h_jitter_gap;
-	dnd_max = assy_dnd_max;
-	dnd_min = assy_dnd_min;
-	hfdnd_max = assy_hfdnd_max;
-	hfdnd_min = assy_hfdnd_min;	
-	reference_data_abnormal_max = assy_reference_data_abnormal_max;
-	return retval;
-
-err_create_sysfs:
-err_create_device:
-	kfree(raw_data);
-
-	return retval;
+err_interfaces:
+        bt541_v8_exit_factory(info);
+err_free_raw:
+        kfree(info->raw_data);
+        info->raw_data = NULL;
+        return ret;
 }
 #endif
+
+static void bt541_v8_control_begin(struct bt541_ts_info *info)
+{
+	WRITE_ONCE(info->v8_busy, true);
+	disable_irq(info->irq);
+	esd_timer_stop(info);
+	cancel_work_sync(&info->tmr_work);
+	esd_timer_stop(info);
+}
+
+static void bt541_v8_control_end(struct bt541_ts_info *info)
+{
+	WRITE_ONCE(info->v8_busy, false);
+	enable_irq(info->irq);
+	esd_timer_start(CHECK_ESD_TIMER, info);
+}
 
 static int ts_misc_fops_open(struct inode *inode, struct file *filp)
 {
@@ -5924,10 +6960,28 @@ static int ts_misc_fops_open(struct inode *inode, struct file *filp)
 
 static int ts_misc_fops_close(struct inode *inode, struct file *filp)
 {
+	struct bt541_ts_info *info;
+	mutex_lock(&bt541_device_lock);
+	info = misc_info;
+	if (info) {
+		mutex_lock(&info->v8_control_lock);
+		if (info->v8_raw_owner == filp) {
+			info->v8_raw_owner = NULL;
+			info->v8_suspect = false;
+			if (info->v8_ready && info->enabled && !info->v8_stopping) {
+				bt541_v8_control_begin(info);
+				if (!ts_set_touchmode(TOUCH_POINT_MODE))
+					bt541_force_recovery(info, "RAW owner closed");
+				bt541_v8_control_end(info);
+			}
+		}
+		mutex_unlock(&info->v8_control_lock);
+	}
+	mutex_unlock(&bt541_device_lock);
 	return 0;
 }
 
-static long ts_misc_fops_ioctl(struct file *filp,
+static long ts_misc_fops_ioctl_locked(struct file *filp,
 		unsigned int cmd, unsigned long arg)
 {
 	void __user *argp = (void __user *)arg;
@@ -6076,6 +7130,7 @@ static long ts_misc_fops_ioctl(struct file *filp,
 			input_err(true, &misc_info->client->dev, "[zinitix_touch]: other process occupied.. (%d)\r\n",
 					misc_info->work_state);
 			up(&misc_info->work_lock);
+			enable_irq(misc_info->irq);
 			return -1;
 		}
 		misc_info->work_state = HW_CALIBRAION;
@@ -6113,9 +7168,7 @@ fail_hw_cal:
 			misc_info->work_state = NOTHING;
 			return -1;
 		}
-		ts_set_touchmode((u16)nval);
-
-		return 0;
+		return ts_set_touchmode((u16)nval) ? 0 : -EIO;
 
 	case TOUCH_IOCTL_GET_REG:
 		down(&misc_info->work_lock);
@@ -6175,7 +7228,7 @@ fail_hw_cal:
 			return -1;
 		}
 
-		if (copy_from_user(&val, (void *)(unsigned long)reg_ioctl.val, 4)) {
+		if (copy_from_user(&nval, (void *)(unsigned long)reg_ioctl.val, sizeof(nval))) {
 			misc_info->work_state = NOTHING;
 			up(&misc_info->work_lock);
 			input_err(true, &misc_info->client->dev, "[zinitix_touch] error : copy_from_user(2)\n");
@@ -6183,7 +7236,7 @@ fail_hw_cal:
 		}
 
 		if (write_reg(misc_info->client,
-					(u16)reg_ioctl.addr, val) != I2C_SUCCESS)
+					(u16)reg_ioctl.addr, (u16)nval) != I2C_SUCCESS)
 			ret = -1;
 
 		input_info(true, &misc_info->client->dev, "write : reg addr = 0x%x, val = 0x%x\r\n",
@@ -6271,6 +7324,28 @@ fail_hw_cal:
 		break;
 	}
 	return 0;
+}
+
+static long ts_misc_fops_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
+{
+	struct bt541_ts_info *info;
+	long ret = -ENODEV;
+	mutex_lock(&bt541_device_lock);
+	info = misc_info;
+	if (info) {
+		mutex_lock(&info->v8_control_lock);
+		if (info->v8_ready && !info->v8_stopping && info->enabled) {
+			info->v8_suspect = false;
+			bt541_v8_control_begin(info);
+			ret = ts_misc_fops_ioctl_locked(filp, cmd, arg);
+			if (!ret && cmd == TOUCH_IOCTL_SET_RAW_DATA_MODE)
+				info->v8_raw_owner = info->touch_mode == TOUCH_POINT_MODE ? NULL : filp;
+			bt541_v8_control_end(info);
+		}
+		mutex_unlock(&info->v8_control_lock);
+	}
+	mutex_unlock(&bt541_device_lock);
+	return ret;
 }
 
 #ifdef CONFIG_OF
@@ -6426,6 +7501,9 @@ static int bt541_ts_probe(struct i2c_client *client,
 	struct input_dev *input_dev;
 	int ret = 0;
 	int i;
+	bool input_registered = false, irq_registered = false;
+	bool misc_registered = false, gpio_requested = false;
+	bool notifications_registered = false;
 
 	struct device_node *np = client->dev.of_node;
 
@@ -6449,6 +7527,16 @@ static int bt541_ts_probe(struct i2c_client *client,
 		goto err_mem_alloc;
 	}
 
+	mutex_init(&info->v8_control_lock);
+	INIT_DELAYED_WORK(&info->v8_work, bt541_v8_work_fn);
+	info->v8_auto_enabled = BT541_V8_DEFAULT_AUTO;
+	atomic_set(&info->v8_screen_on, 0); /* wait for confirmed FB unblank */
+	info->v8_last_point = jiffies;
+	sema_init(&info->work_lock, 1);
+	sema_init(&info->raw_data_lock, 1);
+	esd_timer_init(info);
+	INIT_WORK(&info->tmr_work, ts_tmr_work);
+	info->client = client;
 #ifdef CONFIG_OF
 	if (client->dev.of_node) {
 		info->pdata = devm_kzalloc(&client->dev,
@@ -6481,6 +7569,7 @@ static int bt541_ts_probe(struct i2c_client *client,
 				info->pdata->gpio_int, ret);
 		goto err_gpio_alloc;
 	}
+	gpio_requested = true;
 	/* if pinctrl set up at dts file, gpio_direction_input don't use. */ 
 	/*gpio_direction_input(info->pdata->gpio_int);*/
 	i2c_set_clientdata(client, info);
@@ -6495,6 +7584,28 @@ static int bt541_ts_probe(struct i2c_client *client,
 	info->input_dev = input_dev;
 	info->work_state = PROBE;
 	info->enabled = true;
+
+
+
+
+
+	spin_lock_init(&info->health.lock);
+	atomic_set(&info->health.irq, 0);
+	atomic_set(&info->health.invalid_gpio, 0);
+	atomic_set(&info->health.lock_busy, 0);
+	atomic_set(&info->health.state_busy, 0);
+	atomic_set(&info->health.coord_recovery, 0);
+	atomic_set(&info->health.heartbeat, 0);
+	atomic_set(&info->health.nonzero_packet, 0);
+	atomic_set(&info->health.contacts, 0);
+	atomic_set(&info->health.sync, 0);
+	atomic_set(&info->health.invalid_coord, 0);
+	memset(&info->health.packet, 0, sizeof(info->health.packet));
+	info->health.packet_mode = TOUCH_POINT_MODE;
+	info->health.last_packet_jiffies = 0;
+	info->health.last_contact_jiffies = 0;
+	info->health.packet_valid = false;
+	info->health.contact_valid = false;
 
 	/* because buffer size, MTK use TPD_SUPPORT_I2C_DMA */ 
 #if TPD_SUPPORT_I2C_DMA
@@ -6512,8 +7623,10 @@ static int bt541_ts_probe(struct i2c_client *client,
 	/* MTK use DTS file pinctrl, If it don't use, pinctrl is default. */
 	info->pinctrl = devm_pinctrl_get(&client->dev);
 	if (IS_ERR(info->pinctrl)) {
-		if (PTR_ERR(info->pinctrl) == -EPROBE_DEFER)
+		if (PTR_ERR(info->pinctrl) == -EPROBE_DEFER) {
+			ret = -EPROBE_DEFER;
 			goto err_pinctrl;
+		}
 
 		input_err(true, &info->client->dev, "%s: Target does not use pinctrl\n", __func__);
 		info->pinctrl = NULL;
@@ -6537,7 +7650,9 @@ static int bt541_ts_probe(struct i2c_client *client,
 
 	/* init touch mode */
 	info->touch_mode = TOUCH_POINT_MODE;
+	mutex_lock(&bt541_device_lock);
 	misc_info = info;
+	mutex_unlock(&bt541_device_lock);
 	info->pat_flag = false;
 	if (init_touch(info, fw_true) == false) {
 		ret = -EPERM;
@@ -6623,6 +7738,7 @@ static int bt541_ts_probe(struct i2c_client *client,
 		goto err_input_register_device;
 	}
 
+	input_registered = true;
 	/* configure irq */
 	info->irq = gpio_to_irq(info->pdata->gpio_int);
 	if (info->irq < 0)
@@ -6634,7 +7750,7 @@ static int bt541_ts_probe(struct i2c_client *client,
 
 	info->work_state = NOTHING;
 
-	sema_init(&info->work_lock, 1);
+
 
 #if ESD_TIMER_INTERVAL
 	spin_lock_init(&info->lock);
@@ -6649,8 +7765,8 @@ static int bt541_ts_probe(struct i2c_client *client,
 		goto err_esd_input_unregister_device;
 	}
 
-	esd_timer_init(info);
-	esd_timer_start(CHECK_ESD_TIMER, info);
+
+
 #if defined(TSP_VERBOSE_DEBUG)
 	input_info(true, &client->dev, "Started esd timer\n");
 #endif
@@ -6663,6 +7779,7 @@ static int bt541_ts_probe(struct i2c_client *client,
 				info->input_dev->name);
 		goto err_request_irq;
 	}
+	irq_registered = true;
 	input_info(true, &client->dev, "zinitix touch probe.\r\n");
 #ifdef CONFIG_HAS_EARLYSUSPEND
 	info->early_suspend.level = EARLY_SUSPEND_LEVEL_BLANK_SCREEN + 1;
@@ -6675,14 +7792,16 @@ static int bt541_ts_probe(struct i2c_client *client,
 	pm_runtime_enable(&client->dev);
 #endif
 
-	sema_init(&info->raw_data_lock, 1);
 
+
+	notifications_registered = true;
 	ret = misc_register(&touch_misc_device);
 	if (ret) {
 		input_err(true, &client->dev, "Failed to register touch misc device\n");
 		goto err_misc_register;
 	}
 
+	misc_registered = true;
 #ifdef CONFIG_SEC_FACTORY_TEST
 	ret = init_sec_factory(info);
 	if (ret) {
@@ -6691,20 +7810,38 @@ static int bt541_ts_probe(struct i2c_client *client,
 		goto err_kthread_create_failed;
 	}
 #endif
+#ifdef CONFIG_FB
+	info->v8_fb.notifier_call = bt541_v8_fb_event;
+	ret = fb_register_client(&info->v8_fb);
+	if (!ret)
+		info->v8_fb_registered = true;
+	else
+		input_err(true, &client->dev, "V8 FB registration failed: %d; auto paused\n", ret);
+#endif
+	mutex_lock(&info->v8_control_lock);
+	WRITE_ONCE(info->v8_busy, true);
+	disable_irq(info->irq);
+	write_cmd(client, BT541_CLEAR_INT_STATUS_CMD);
+	WRITE_ONCE(info->v8_ready, true);
+	if (info->v8_auto_enabled && atomic_read(&info->v8_screen_on))
+		mod_delayed_work(system_wq, &info->v8_work,
+			msecs_to_jiffies(BT541_V8_INTERVAL_MS));
+	WRITE_ONCE(info->v8_busy, false);
+	enable_irq(info->irq);
+	esd_timer_start(CHECK_ESD_TIMER, info);
+	mutex_unlock(&info->v8_control_lock);
+	input_info(true, &client->dev, "BT541 V8 loaded: auto=%u, threshold=%d\n",
+		info->v8_auto_enabled, BT541_V8_DELTA_THRESHOLD);
 	return 0;
 
 #ifdef CONFIG_SEC_FACTORY_TEST
 err_kthread_create_failed:
-	kfree(info->raw_data);
 #endif
 err_misc_register:
-	free_irq(info->irq, info);
 err_request_irq:
 #if ESD_TIMER_INTERVAL
 err_esd_input_unregister_device:
 #endif
-	input_unregister_device(info->input_dev);
-	info->input_dev = NULL;
 err_input_register_device:
 err_init_touch:
 err_power_sequence:
@@ -6712,78 +7849,164 @@ err_pinctrl:
 #if TPD_SUPPORT_I2C_DMA
 err_dma:
 #endif
-	if (info->input_dev) {
-		input_free_device(info->input_dev);
-	}
-	gpio_free(info->pdata->gpio_int);
 err_alloc:
 err_gpio_alloc:
 err_no_platform_data:
-	input_info(true, &client->dev, "Failed to probe\n");
+	mutex_lock(&info->v8_control_lock);
+	WRITE_ONCE(info->v8_stopping, true);
+	WRITE_ONCE(info->enabled, false);
+	WRITE_ONCE(info->v8_busy, true);
+	mutex_unlock(&info->v8_control_lock);
+	if (notifications_registered)
+		bt541_v8_unregister_notifications(info);
+#ifdef CONFIG_SEC_FACTORY_TEST
+	bt541_v8_exit_factory(info);
+#endif
+	if (misc_registered)
+		misc_deregister(&touch_misc_device);
+	mutex_lock(&bt541_device_lock);
+	if (misc_info == info)
+		misc_info = NULL;
+	mutex_unlock(&bt541_device_lock);
+	if (irq_registered)
+		disable_irq(info->irq);
+	cancel_delayed_work_sync(&info->v8_work);
+	esd_timer_stop(info);
+	cancel_work_sync(&info->tmr_work);
+	esd_timer_stop(info);
+	if (irq_registered)
+		free_irq(info->irq, info);
+	if (esd_tmr_workqueue) {
+		destroy_workqueue(esd_tmr_workqueue);
+		esd_tmr_workqueue = NULL;
+	}
+	if (input_registered)
+		input_unregister_device(info->input_dev);
+	else if (info->input_dev)
+		input_free_device(info->input_dev);
+#if TPD_SUPPORT_I2C_DMA
+	if (gpDMABuf_va) {
+		dma_free_coherent(&client->dev, IIC_DMA_MAX_TRANSFER_SIZE,
+			gpDMABuf_va, gpDMABuf_pa);
+		gpDMABuf_va = NULL;
+		gpDMABuf_pa = 0;
+	}
+#endif
+	if (info->pdata) {
+		bt541_power_control(info, POWER_OFF);
+#ifdef CONFIG_OF
+		if (client->dev.of_node && !IS_ERR_OR_NULL(info->pdata->vreg_vio))
+			regulator_put(info->pdata->vreg_vio);
+#endif
+	}
+	if (gpio_requested)
+		gpio_free(info->pdata->gpio_int);
+#ifdef CONFIG_SEC_FACTORY_TEST
+	kfree(info->raw_data);
+#endif
+	i2c_set_clientdata(client, NULL);
+	mutex_destroy(&info->v8_control_lock);
 	kfree(info);
 err_mem_alloc:
 err_i2c_check:
-//err_octa_id:
-	return ret;
+	return ret ? ret : -ENOMEM;
 }
 
 static int bt541_ts_remove(struct i2c_client *client)
 {
-	struct bt541_ts_info *info = i2c_get_clientdata(client);
-	struct bt541_ts_platform_data *pdata = info->pdata;
+        struct bt541_ts_info *info = i2c_get_clientdata(client);
+        struct bt541_ts_platform_data *pdata;
+        bool was_enabled;
 
-	disable_irq(info->irq);
-	down(&info->work_lock);
+        if (!info)
+                return 0;
+        pdata = info->pdata;
 
-	info->work_state = REMOVE;
+        was_enabled = bt541_v8_begin_terminal_stop(info);
+        bt541_v8_unregister_notifications(info);
 
 #ifdef CONFIG_SEC_FACTORY_TEST
-	kfree(info->raw_data);
+        bt541_v8_exit_factory(info);
 #endif
+        misc_deregister(&touch_misc_device);
+
+        /* An already-open misc FD still exists after misc_deregister. Drain
+         * its in-flight ioctl and make every later ioctl return -ENODEV.
+         * Never take device_lock while holding control_lock (opposite order).
+         */
+        mutex_lock(&bt541_device_lock);
+        if (misc_info == info)
+                misc_info = NULL;
+        mutex_unlock(&bt541_device_lock);
+
+        mutex_lock(&info->v8_control_lock);
+        bt541_v8_quiesce_locked(info, was_enabled);
+        mutex_unlock(&info->v8_control_lock);
+
+        free_irq(info->irq, info);
 #if ESD_TIMER_INTERVAL
-	flush_work(&info->tmr_work);
-	write_reg(info->client, BT541_PERIODICAL_INTERRUPT_INTERVAL, 0);
-	esd_timer_stop(info);
-#if defined(TSP_VERBOSE_DEBUG)
-	input_info(true, &client->dev, "Stopped esd timer\n");
-#endif
-	destroy_workqueue(esd_tmr_workqueue);
+        if (esd_tmr_workqueue) {
+                destroy_workqueue(esd_tmr_workqueue);
+                esd_tmr_workqueue = NULL;
+        }
 #endif
 
-	if (info->irq)
-		free_irq(info->irq, info);
+        /* input_unregister invokes close. Do not hold either driver lock;
+         * the close wrapper must see v8_stopping and leave the IRQ alone.
+         */
+        input_unregister_device(info->input_dev);
+        info->input_dev = NULL;
 
-	misc_deregister(&touch_misc_device);
-
-#ifdef CONFIG_HAS_EARLYSUSPEND
-	unregister_early_suspend(&info->early_suspend);
+#ifdef CONFIG_SEC_FACTORY_TEST
+        kfree(info->raw_data);
+        info->raw_data = NULL;
 #endif
+#if TPD_SUPPORT_I2C_DMA
+        if (gpDMABuf_va) {
+                dma_free_coherent(&client->dev, IIC_DMA_MAX_TRANSFER_SIZE,
+                                gpDMABuf_va, gpDMABuf_pa);
+                gpDMABuf_va = NULL;
+                gpDMABuf_pa = 0;
+        }
+#endif
+        if (gpio_is_valid(pdata->gpio_int))
+                gpio_free(pdata->gpio_int);
 
-	if (gpio_is_valid(pdata->gpio_int) != 0)
-		gpio_free(pdata->gpio_int);
-
-	input_unregister_device(info->input_dev);
-	input_free_device(info->input_dev);
-	up(&info->work_lock);
-	kfree(info);
-
-	return 0;
+        /* The DT path obtains its own regulator reference with regulator_get.
+         * Platform-data ownership is external and is therefore left alone.
+         */
+#ifdef CONFIG_OF
+        if (client->dev.of_node && !IS_ERR_OR_NULL(pdata->vreg_vio)) {
+                regulator_put(pdata->vreg_vio);
+                pdata->vreg_vio = NULL;
+        }
+#endif
+        i2c_set_clientdata(client, NULL);
+        mutex_destroy(&info->v8_control_lock);
+        kfree(info);
+        return 0;
 }
 
 void bt541_ts_shutdown(struct i2c_client *client)
 {
-	struct bt541_ts_info *info = i2c_get_clientdata(client);
+        struct bt541_ts_info *info = i2c_get_clientdata(client);
+        bool was_enabled;
 
-	input_info(true, &client->dev, "%s++\n",__func__);
-	disable_irq(info->irq);
-	down(&info->work_lock);
-#if ESD_TIMER_INTERVAL
-	flush_work(&info->tmr_work);
-	esd_timer_stop(info);
+        if (!info)
+                return;
+
+        was_enabled = bt541_v8_begin_terminal_stop(info);
+        bt541_v8_unregister_notifications(info);
+
+#ifdef CONFIG_SEC_FACTORY_TEST
+        /* Touchkey attributes are independent of SEC_CMD wrappers. Drain
+         * them as well, so no sensitivity read can start after power-off.
+         */
+        bt541_v8_exit_factory(info);
 #endif
-	up(&info->work_lock);
-	bt541_power_control(info, POWER_OFF);
-	input_info(true, &client->dev, "%s--\n",__func__);
+        mutex_lock(&info->v8_control_lock);
+        bt541_v8_quiesce_locked(info, was_enabled);
+        mutex_unlock(&info->v8_control_lock);
 }
 
 
@@ -6793,11 +8016,11 @@ static struct i2c_device_id bt541_idtable[] = {
 };
 
 #if defined(CONFIG_PM) && !defined(CONFIG_HAS_EARLYSUSPEND)
-static const struct dev_pm_ops bt541_ts_pm_ops ={
+/* LineageOS: register both system-sleep and runtime PM callbacks. */
+static const struct dev_pm_ops bt541_ts_pm_ops = {
+	SET_SYSTEM_SLEEP_PM_OPS(bt541_ts_suspend, bt541_ts_resume)
 #if defined(CONFIG_PM_RUNTIME)
 	SET_RUNTIME_PM_OPS(bt541_ts_suspend, bt541_ts_resume, NULL)
-#else
-	SET_SYSTEM_SLEEP_PM_OPS(bt541_ts_suspend, bt541_ts_resume)
 #endif
 };
 #endif
